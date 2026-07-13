@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Four chevrons pointing inward toward center - standard "collapse / exit
+     fullscreen" glyph (mirror image of the usual "expand" icon). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- top-left corner, pointing down-right -->
+    <path
+        android:fillColor="#F2F2F2"
+        android:pathData="M3,9 L3,4 L5,4 L5,7 L8,7 L8,9 Z" />
+    <!-- top-right corner, pointing down-left -->
+    <path
+        android:fillColor="#F2F2F2"
+        android:pathData="M21,9 L21,4 L19,4 L19,7 L16,7 L16,9 Z" />
+    <!-- bottom-right corner, pointing up-left -->
+    <path
+        android:fillColor="#F2F2F2"
+        android:pathData="M21,15 L21,20 L19,20 L19,17 L16,17 L16,15 Z" />
+    <!-- bottom-left corner, pointing up-right -->
+    <path
+        android:fillColor="#F2F2F2"
+        android:pathData="M3,15 L3,20 L5,20 L5,17 L8,17 L8,15 Z" />
+</vector>

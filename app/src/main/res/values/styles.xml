@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.UrlHud" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">#18181A</item>
+        <item name="android:statusBarColor">#18181A</item>
+        <item name="android:navigationBarColor">#18181A</item>
+    </style>
+
+    <!-- Frameless: no action bar, no title, edge-to-edge - the native
+         equivalent of Electron's frame:false BrowserWindow. -->
+    <style name="Theme.UrlHud.Fullscreen" parent="Theme.UrlHud">
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:windowContentOverlay">@null</item>
+    </style>
+</resources>
