@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<style>
+  /* Ported 1:1 from index.html's #bottom-bar + #bm-modal styling on desktop -
+     same colors, spacing, and structure, just sized for touch. */
+  :root {
+    --bar-bg: rgba(24, 24, 26, 0.98);
+    --bar-border: rgba(255, 255, 255, 0.10);
+    --accent: #4a90e2;
+    --text: #f2f2f2;
+    --text-dim: #9a9a9a;
+    --chip-bg: rgba(255, 255, 255, 0.06);
+    --chip-border: rgba(255, 255, 255, 0.14);
+    --danger: #e04a4a;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background: var(--bar-bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  #bottom-bar {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--bar-bg);
+    border-top: 1px solid var(--bar-border);
+  }
+
+  /* Bookmarks row - sits ABOVE the url/toolbar row, own horizontal scroller. */
+  #bookmarks-row {
+    flex: 0 0 40px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    box-sizing: border-box;
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: 1px solid var(--bar-border);
+  }
+  #bookmarks-row::-webkit-scrollbar { display: none; }
+
+  #toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    flex: 1 1 auto;
+    min-height: 0;
+    box-sizing: border-box;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  #toolbar-row::-webkit-scrollbar { display: none; }
+
+  #bookmarks-inline {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 auto;
+  }
+
+  .icon-btn {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 16px;
+    position: relative;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .icon-btn:active:not(:disabled) { background: var(--chip-bg); color: #fff; border-color: var(--chip-border); }
+  .icon-btn:disabled { opacity: 0.3; }
+  .icon-btn.danger:active:not(:disabled) { background: rgba(224, 74, 74, 0.22); border-color: var(--danger); color: #fff; }
+
+  #address-input {
+    flex: 1 1 60px;
+    min-width: 60px;
+    height: 32px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--chip-border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 0 10px;
+    outline: none;
+    font-family: inherit;
+    box-sizing: border-box;
+  }
+  #address-input:focus { border-color: var(--accent); background: rgba(255, 255, 255, 0.08); }
+
+  .divider { width: 1px; height: 20px; background: var(--bar-border); flex: 0 0 auto; margin: 0 2px; }
+
+  .bm-chip {
+    flex: 0 0 auto;
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--chip-border);
+    background: var(--chip-bg);
+    color: #d8d8d8;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .bm-chip:active { background: rgba(74, 144, 226, 0.25); color: #fff; border-color: var(--accent); }
+  .bm-add { color: var(--accent); }
+
+  #downloads-wrap { position: relative; }
+
+  #downloads-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 8px;
+    min-width: 14px;
+    height: 14px;
+    line-height: 14px;
+    text-align: center;
+    padding: 0 3px;
+    display: none;
+    pointer-events: none;
+  }
+
+  #downloads-panel {
+    position: fixed;
+    bottom: 92px;
+    right: 8px;
+    left: 8px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: #1c1c1e;
+    border: 1px solid var(--chip-border);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    display: none;
+    flex-direction: column;
+    padding: 6px;
+    z-index: 50;
+  }
+  #downloads-panel.open { display: flex; }
+
+  .dl-header { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px 10px; }
+  .dl-header span { font-size: 13px; font-weight: 700; color: #eee; }
+  .dl-clear { font-size: 12px; color: var(--accent); background: none; border: none; cursor: pointer; padding: 4px; }
+  .dl-empty { padding: 24px 10px; text-align: center; color: var(--text-dim); font-size: 13px; }
+
+  .dl-item { padding: 10px; border-radius: 8px; }
+  .dl-item:active { background: rgba(255, 255, 255, 0.04); }
+  .dl-name { font-size: 13px; color: #eee; font-weight: 600; margin-bottom: 3px; word-break: break-all; }
+  .dl-meta { font-size: 11px; color: var(--text-dim); margin-bottom: 7px; }
+  .dl-progress-track { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.1); overflow: hidden; margin-bottom: 7px; }
+  .dl-progress-fill { height: 100%; background: var(--accent); width: 0%; }
+  .dl-actions { display: flex; gap: 8px; }
+  .dl-actions button {
+    font-size: 11px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--chip-border);
+    background: var(--chip-bg);
+    color: #d8d8d8;
+    cursor: pointer;
+  }
+  .dl-actions button.danger:active { background: rgba(224, 74, 74, 0.22); border-color: var(--danger); color: #fff; }
+
+  /* The bar's own WebView is short (bookmarks row + url row only), so a
+     vertically-centered fixed overlay would render mostly clipped above the
+     WebView and swallow taps meant for the inputs. Instead we anchor the
+     modal to the BOTTOM of the bar and let it grow upward, fully inside the
+     viewport, with its own scroll if content is tall. */
+  #bm-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 999;
+  }
+  #bm-modal-overlay.open { display: flex; }
+
+  #bm-modal {
+    width: 100vw;
+    max-width: 420px;
+    max-height: 92vh;
+    overflow-y: auto;
+    background: #1c1c1e;
+    border: 1px solid var(--chip-border);
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.55);
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+  }
+  #bm-modal-title { font-size: 14px; font-weight: 700; color: #eee; margin-bottom: 10px; }
+  .bm-modal-label { font-size: 12px; color: var(--text-dim); margin: 10px 0 4px; }
+  .bm-modal-input {
+    width: 100%;
+    height: 36px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--chip-border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 14px;
+    padding: 0 10px;
+    outline: none;
+    font-family: inherit;
+    box-sizing: border-box;
+  }
+  .bm-modal-input:focus { border-color: var(--accent); background: rgba(255, 255, 255, 0.08); }
+  #bm-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+  #bm-modal-actions button {
+    font-size: 13px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--chip-border);
+    background: var(--chip-bg);
+    color: #d8d8d8;
+    cursor: pointer;
+  }
+  #bm-modal-ok { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+  .bm-ctx-menu {
+    position: fixed;
+    background: #1c1c1e;
+    border: 1px solid var(--chip-border);
+    border-radius: 8px;
+    z-index: 999;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 130px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  .bm-ctx-menu button {
+    background: transparent;
+    border: none;
+    padding: 10px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    text-align: left;
+    font-size: 13px;
+  }
+  .bm-ctx-menu button:active { background: rgba(255, 255, 255, 0.1); }
+</style>
+</head>
+<body>
+  <div id="bottom-bar">
+    <div id="bookmarks-row">
+      <div id="bookmarks-inline"></div>
+    </div>
+
+    <div id="toolbar-row">
+      <input id="address-input" type="text" placeholder="Enter URL and press Go…" autocomplete="off" spellcheck="false">
+
+      <div class="divider"></div>
+
+      <button class="icon-btn" id="btn-fullscreen" title="Enter fullscreen">&#9974;</button>
+
+      <div id="downloads-wrap">
+        <button class="icon-btn" id="btn-downloads" title="Downloads">
+          &#8595;
+          <span id="downloads-badge">0</span>
+        </button>
+      </div>
+
+      <div class="divider"></div>
+
+      <button class="icon-btn" id="btn-split-row" title="Split side by side">&#8646;</button>
+      <button class="icon-btn" id="btn-split-col" title="Split top/bottom">&#8645;</button>
+      <button class="icon-btn danger" id="btn-close-pane" title="Remove this split" disabled>&#10005;</button>
+    </div>
+  </div>
+
+  <div id="downloads-panel">
+    <div class="dl-header">
+      <span>Downloads</span>
+      <button class="dl-clear" id="dl-clear-btn">Clear completed</button>
+    </div>
+    <div id="dl-list"></div>
+  </div>
+
+  <div id="bm-modal-overlay">
+    <div id="bm-modal">
+      <div id="bm-modal-title">Add bookmark</div>
+      <div class="bm-modal-label">URL</div>
+      <input id="bm-modal-url" class="bm-modal-input" type="text" placeholder="https://example.com" autocomplete="off" spellcheck="false">
+      <div class="bm-modal-label">Label</div>
+      <input id="bm-modal-label" class="bm-modal-input" type="text" placeholder="Label" autocomplete="off" spellcheck="false">
+      <div id="bm-modal-actions">
+        <button id="bm-modal-cancel">Cancel</button>
+        <button id="bm-modal-ok">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="bar.js"></script>
+</body>
+</html>
