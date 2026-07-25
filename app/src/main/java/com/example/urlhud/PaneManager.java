@@ -73,25 +73,27 @@ public class PaneManager {
     private static final float DEFAULT_RATIO = 0.5f;
     private static final float MIN_RATIO = 0.15f;
     private static final float MAX_RATIO = 0.85f;
-    private static final int DIVIDER_THICKNESS_DP = 10;
-    private static final int DIVIDER_LINE_DP = 2;
+    private static final int DIVIDER_THICKNESS_DP = 6;
+    private static final int DIVIDER_LINE_DP = 1;
     private static final int DIVIDER_COLOR = 0x33FFFFFF;
     private static final int DIVIDER_COLOR_ACTIVE = 0xFF4A90E2;
 
     // Focus-border shown around whichever pane was last touched, only when
     // there's more than one pane on screen (a single pane is unambiguously
-    // "focused" already, so the border would just be visual noise).
+    // "focused" already, so the border would just be visual noise). Drawn
+    // as a foreground overlay (see refreshFocusBorders()), not padding, so
+    // it never insets the WebView - panes stay edge-to-edge either way.
     private static final int FOCUS_BORDER_DP = 2;
     private static final int FOCUS_BORDER_COLOR = 0x664A90E2;
 
     // Per-pane zoom control: a small +/- pair pinned to each pane's own
-    // bottom-right corner. Unlike the focus border, this is always visible
-    // (even with a single pane, even in fullscreen) since it's the only
-    // way to zoom now that the bar's zoom buttons are gone.
-    private static final int ZOOM_CONTROL_WIDTH_DP = 40;
-    private static final int ZOOM_CONTROL_BUTTON_HEIGHT_DP = 40;
-    private static final int ZOOM_CONTROL_MARGIN_DP = 10;
-    private static final int ZOOM_CONTROL_CORNER_RADIUS_DP = 8;
+    // right edge, vertically centered. Unlike the focus border, this is
+    // always visible (even with a single pane, even in fullscreen) since
+    // it's the only way to zoom now that the bar's zoom buttons are gone.
+    private static final int ZOOM_CONTROL_WIDTH_DP = 28;
+    private static final int ZOOM_CONTROL_BUTTON_HEIGHT_DP = 28;
+    private static final int ZOOM_CONTROL_MARGIN_DP = 6;
+    private static final int ZOOM_CONTROL_CORNER_RADIUS_DP = 6;
     private static final int ZOOM_CONTROL_BG_COLOR = 0xCC18181A;
     private static final int ZOOM_CONTROL_BORDER_COLOR = 0x33FFFFFF;
     private static final int ZOOM_CONTROL_TEXT_COLOR = 0xFFF2F2F2;
@@ -247,13 +249,20 @@ public class PaneManager {
         refreshFocusBorders();
     }
 
-    /** Applies the subtle focus border to whichever leaf's wrapper matches activePane. */
+    /** Applies the subtle focus border to whichever leaf's wrapper matches activePane. Drawn as a foreground overlay so it never insets the WebView underneath. */
     private void refreshFocusBorders() {
         boolean showBorders = hasSplit(); // no point bordering a single, unambiguous pane
         for (Map.Entry<WebView, FrameLayout> entry : leafWrappers.entrySet()) {
             boolean isActive = showBorders && entry.getKey() == activePane;
-            entry.getValue().setBackgroundColor(isActive ? FOCUS_BORDER_COLOR : Color.TRANSPARENT);
+            entry.getValue().setForeground(isActive ? focusBorderDrawable() : null);
         }
+    }
+
+    private GradientDrawable focusBorderDrawable() {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(Color.TRANSPARENT);
+        d.setStroke(dpToPx(FOCUS_BORDER_DP), FOCUS_BORDER_COLOR);
+        return d;
     }
 
     public boolean hasSplit() {
@@ -351,27 +360,27 @@ public class PaneManager {
     }
 
     /**
-     * Wraps a leaf's WebView in a FrameLayout whose padding becomes the
-     * focus-border ring: the wrapper's background only shows through that
-     * padding, so painting it FOCUS_BORDER_COLOR draws a thin ring around
-     * the WebView without touching the WebView's own layout at all. Also
-     * anchors that pane's own zoom control to the wrapper's bottom-right
-     * corner, so it stays pinned to this specific pane through re-layouts.
+     * Wraps a leaf's WebView in a FrameLayout with no padding, so the
+     * WebView always fills the pane edge-to-edge - the only thing
+     * separating two split panes is the thin drag divider between them.
+     * The focus-border ring (see refreshFocusBorders()) is painted as a
+     * foreground overlay on top of this wrapper instead, so it never eats
+     * into that space either. Also anchors that pane's own zoom control to
+     * the wrapper's right edge, vertically centered, so it stays pinned to
+     * this specific pane through re-layouts.
      */
     private FrameLayout wrapLeaf(WebView webView) {
         FrameLayout wrapper = new FrameLayout(context);
         wrapper.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        int borderPx = dpToPx(FOCUS_BORDER_DP);
-        wrapper.setPadding(borderPx, borderPx, borderPx, borderPx);
         wrapper.setBackgroundColor(Color.TRANSPARENT);
         wrapper.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         FrameLayout.LayoutParams zoomLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        zoomLp.gravity = Gravity.BOTTOM | Gravity.END;
-        zoomLp.setMargins(0, 0, dpToPx(ZOOM_CONTROL_MARGIN_DP), dpToPx(ZOOM_CONTROL_MARGIN_DP));
+        zoomLp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
+        zoomLp.setMargins(0, 0, dpToPx(ZOOM_CONTROL_MARGIN_DP), 0);
         View zoomControl = createZoomControl(webView);
         wrapper.addView(zoomControl, zoomLp);
         // Belt-and-suspenders: guarantees the zoom control is the topmost
@@ -385,7 +394,7 @@ public class PaneManager {
         return wrapper;
     }
 
-    /** Builds the persistent +/- zoom control pinned to one pane's bottom-right corner. */
+    /** Builds the persistent +/- zoom control pinned to one pane's right edge, vertically centered. */
     private View createZoomControl(WebView pane) {
         LinearLayout group = new LinearLayout(context);
         group.setOrientation(LinearLayout.VERTICAL);
@@ -409,7 +418,7 @@ public class PaneManager {
         TextView button = new TextView(context);
         button.setText(label);
         button.setTextColor(ZOOM_CONTROL_TEXT_COLOR);
-        button.setTextSize(16);
+        button.setTextSize(12);
         button.setGravity(Gravity.CENTER);
         button.setClickable(true);
         button.setFocusable(true);
