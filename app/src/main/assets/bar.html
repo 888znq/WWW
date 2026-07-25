@@ -37,20 +37,6 @@
     border-top: 1px solid var(--bar-border);
   }
 
-  /* Bookmarks row - sits ABOVE the url/toolbar row, own horizontal scroller. */
-  #bookmarks-row {
-    flex: 0 0 40px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0 8px;
-    box-sizing: border-box;
-    overflow-x: auto;
-    scrollbar-width: none;
-    border-bottom: 1px solid var(--bar-border);
-  }
-  #bookmarks-row::-webkit-scrollbar { display: none; }
-
   #toolbar-row {
     display: flex;
     align-items: center;
@@ -63,13 +49,6 @@
     scrollbar-width: none;
   }
   #toolbar-row::-webkit-scrollbar { display: none; }
-
-  #bookmarks-inline {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex: 0 0 auto;
-  }
 
   .icon-btn {
     flex: 0 0 auto;
@@ -109,21 +88,6 @@
   #address-input:focus { border-color: var(--accent); background: rgba(255, 255, 255, 0.08); }
 
   .divider { width: 1px; height: 20px; background: var(--bar-border); flex: 0 0 auto; margin: 0 2px; }
-
-  .bm-chip {
-    flex: 0 0 auto;
-    padding: 5px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--chip-border);
-    background: var(--chip-bg);
-    color: #d8d8d8;
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .bm-chip:active { background: rgba(74, 144, 226, 0.25); color: #fff; border-color: var(--accent); }
-  .bm-add { color: var(--accent); }
 
   #downloads-wrap { position: relative; }
 
@@ -186,96 +150,10 @@
   }
   .dl-actions button.danger:active { background: rgba(224, 74, 74, 0.22); border-color: var(--danger); color: #fff; }
 
-  /* The bar's own WebView is short (bookmarks row + url row only), so a
-     vertically-centered fixed overlay would render mostly clipped above the
-     WebView and swallow taps meant for the inputs. Instead we anchor the
-     modal to the BOTTOM of the bar and let it grow upward, fully inside the
-     viewport, with its own scroll if content is tall. */
-  #bm-modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: none;
-    align-items: flex-end;
-    justify-content: center;
-    z-index: 999;
-  }
-  #bm-modal-overlay.open { display: flex; }
-
-  #bm-modal {
-    width: 100vw;
-    max-width: 420px;
-    max-height: 92vh;
-    overflow-y: auto;
-    background: #1c1c1e;
-    border: 1px solid var(--chip-border);
-    border-top-left-radius: 14px;
-    border-top-right-radius: 14px;
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
-    box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.55);
-    padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
-    box-sizing: border-box;
-  }
-  #bm-modal-title { font-size: 14px; font-weight: 700; color: #eee; margin-bottom: 10px; }
-  .bm-modal-label { font-size: 12px; color: var(--text-dim); margin: 10px 0 4px; }
-  .bm-modal-input {
-    width: 100%;
-    height: 36px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--chip-border);
-    border-radius: 6px;
-    color: var(--text);
-    font-size: 14px;
-    padding: 0 10px;
-    outline: none;
-    font-family: inherit;
-    box-sizing: border-box;
-  }
-  .bm-modal-input:focus { border-color: var(--accent); background: rgba(255, 255, 255, 0.08); }
-  #bm-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
-  #bm-modal-actions button {
-    font-size: 13px;
-    padding: 8px 14px;
-    border-radius: 6px;
-    border: 1px solid var(--chip-border);
-    background: var(--chip-bg);
-    color: #d8d8d8;
-    cursor: pointer;
-  }
-  #bm-modal-ok { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-
-  .bm-ctx-menu {
-    position: fixed;
-    background: #1c1c1e;
-    border: 1px solid var(--chip-border);
-    border-radius: 8px;
-    z-index: 999;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 130px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  }
-  .bm-ctx-menu button {
-    background: transparent;
-    border: none;
-    padding: 10px 12px;
-    border-radius: 5px;
-    cursor: pointer;
-    text-align: left;
-    font-size: 13px;
-  }
-  .bm-ctx-menu button:active { background: rgba(255, 255, 255, 0.1); }
 </style>
 </head>
 <body>
   <div id="bottom-bar">
-    <div id="bookmarks-row">
-      <div id="bookmarks-inline"></div>
-    </div>
-
     <div id="toolbar-row">
       <input id="address-input" type="text" placeholder="Enter URL and press Go…" autocomplete="off" spellcheck="false">
 
@@ -304,20 +182,6 @@
       <button class="dl-clear" id="dl-clear-btn">Clear completed</button>
     </div>
     <div id="dl-list"></div>
-  </div>
-
-  <div id="bm-modal-overlay">
-    <div id="bm-modal">
-      <div id="bm-modal-title">Add bookmark</div>
-      <div class="bm-modal-label">URL</div>
-      <input id="bm-modal-url" class="bm-modal-input" type="text" placeholder="https://example.com" autocomplete="off" spellcheck="false">
-      <div class="bm-modal-label">Label</div>
-      <input id="bm-modal-label" class="bm-modal-input" type="text" placeholder="Label" autocomplete="off" spellcheck="false">
-      <div id="bm-modal-actions">
-        <button id="bm-modal-cancel">Cancel</button>
-        <button id="bm-modal-ok">Save</button>
-      </div>
-    </div>
   </div>
 
   <script src="bar.js"></script>

@@ -61,12 +61,19 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
     private WebView barWebView;
     private View exitFullscreenButton;
     private PaneManager paneManager;
-    private BookmarkStore bookmarkStore;
     private SessionStore sessionStore;
+    private ZoomStore zoomStore;
     private DownloadsController downloadsController;
 
     private WebView activePane;
     private final Map<WebView, Float> zoomLevels = new HashMap<>();
+    // Panes whose very first page load should keep the zoom level they were
+    // seeded with (persistedZoom) instead of having it reset to 0f by
+    // PaneWebViewClient#onPageStarted - see createPaneWebView().
+    private final java.util.Set<WebView> pendingInitialZoom = new java.util.HashSet<>();
+    // Last zoom level the user set, persisted via ZoomStore so panes come
+    // back at this zoom after the app is closed and reopened.
+    private float persistedZoom = 0f;
     private boolean fullscreenActive = false;
 
     private ValueCallback<Uri[]> filePathCallback;
@@ -81,8 +88,9 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
         exitFullscreenButton = findViewById(R.id.exit_fullscreen_button);
         exitFullscreenButton.setOnClickListener(v -> handleToggleFullscreen());
 
-        bookmarkStore = new BookmarkStore(this);
         sessionStore = new SessionStore(this);
+        zoomStore = new ZoomStore(this);
+        persistedZoom = zoomStore.load();
         downloadsController = new DownloadsController(this, this);
 
         setupBarWebView();
@@ -167,7 +175,8 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
             return false;
         });
 
-        zoomLevels.put(wv, 0f);
+        zoomLevels.put(wv, persistedZoom);
+        if (persistedZoom != 0f) pendingInitialZoom.add(wv);
         wv.loadUrl(url);
         return wv;
     }
@@ -175,12 +184,19 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
     private class PaneWebViewClient extends WebViewClient {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-            zoomLevels.put(view, 0f); 
+            // A pane's very first load keeps the persisted zoom it was seeded
+            // with in createPaneWebView(); only real navigations after that
+            // reset zoom back to 100%.
+            if (!pendingInitialZoom.remove(view)) {
+                zoomLevels.put(view, 0f);
+            }
         }
 
         @Override
         public void onPageFinished(WebView view, String url) {
             view.setTag(url);
+            Float z = zoomLevels.get(view);
+            if (z != null && z != 0f) applyZoomCss(view, z);
             if (view == activePane) pushActivePaneState();
             saveSession();
 
@@ -306,14 +322,6 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
         saveSession();
     }
 
-    public void handleNavigateToBookmark(String url) {
-        if (activePane == null || url == null) return;
-        activePane.loadUrl(url);
-        activePane.setTag(url);
-        pushActivePaneState();
-        saveSession();
-    }
-
     private void applyZoomStep(WebView pane, float step) {
         if (pane == null) return;
         
@@ -322,9 +330,19 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
         
         if (next == current) return;
         zoomLevels.put(pane, next);
-        
+
+        // Remember this as the zoom to restore panes to next time the app
+        // is launched (see createPaneWebView() / ZoomStore).
+        persistedZoom = next;
+        zoomStore.save(next);
+
+        applyZoomCss(pane, next);
+    }
+
+    /** Injects the CSS zoom (and dimensional compensation) for an absolute level onto an already-loaded pane. */
+    private void applyZoomCss(WebView pane, float level) {
         // 1. Calculate the precise scale multiplier (e.g., 0.83 for zoom out)
-        float scaleMultiplier = (float) Math.pow(1.2, next);
+        float scaleMultiplier = (float) Math.pow(1.2, level);
         
         // 2. Calculate the compensation size to prevent those massive empty gaps.
         // If zoom is 80% (0.8), the page canvas needs to stretch to 125vw/125vh to reach the edges.
@@ -395,36 +413,10 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
         WebView newActive = paneManager.closePane(activePane);
         if (newActive != null) {
             zoomLevels.remove(activePane);
+            pendingInitialZoom.remove(activePane);
             setActivePane(newActive);
             saveSession();
         }
-    }
-
-    public String handleGetBookmarksJson() {
-        return bookmarkStore.toJson();
-    }
-
-    public void handleAddBookmark(String bookmarkJson) {
-        try {
-            bookmarkStore.add(new JSONObject(bookmarkJson));
-            pushBookmarks();
-        } catch (JSONException ignored) {}
-    }
-
-    public void handleEditBookmark(int index, String bookmarkJson) {
-        try {
-            bookmarkStore.edit(index, new JSONObject(bookmarkJson));
-            pushBookmarks();
-        } catch (JSONException ignored) {}
-    }
-
-    public void handleDeleteBookmark(int index) {
-        bookmarkStore.delete(index);
-        pushBookmarks();
-    }
-
-    private void pushBookmarks() {
-        runJs("window.onBookmarksUpdated && window.onBookmarksUpdated(" + bookmarkStore.toJson() + ")");
     }
 
     public String handleGetDownloadsJson() {

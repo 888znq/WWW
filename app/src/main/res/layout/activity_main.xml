@@ -17,11 +17,11 @@
             android:layout_weight="1" />
 
         <!-- Persistent bottom bar, hidden while in fullscreen (see MainActivity#handleToggleFullscreen).
-             92dp = 40dp bookmarks row + 52dp url/toolbar row, both laid out inside bar.html. -->
+             52dp = url/toolbar row, laid out inside bar.html. -->
         <WebView
             android:id="@+id/bar_webview"
             android:layout_width="match_parent"
-            android:layout_height="92dp"
+            android:layout_height="52dp"
             android:background="#00000000" />
 
     </LinearLayout>

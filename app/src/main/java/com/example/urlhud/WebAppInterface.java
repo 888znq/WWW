@@ -16,11 +16,11 @@ import android.webkit.JavascriptInterface;
  * thread by default, and WebView/View mutations must happen on the UI
  * thread.
  *
- * getBookmarksJson()/getDownloadsJson() are the two exceptions: they only
- * read already-serialized JSON (no View access), so they return
- * synchronously without a UI-thread hop, similar in spirit to Electron's
- * ipcMain.handle('get-bookmarks'/'get-downloads') which also just reads
- * local state and returns it directly.
+ * getDownloadsJson() is the one exception: it only reads already-
+ * serialized JSON (no View access), so it returns synchronously without
+ * a UI-thread hop, similar in spirit to Electron's
+ * ipcMain.handle('get-downloads') which also just reads local state and
+ * returns it directly.
  */
 public class WebAppInterface {
 
@@ -32,16 +32,11 @@ public class WebAppInterface {
 
     // ---------------------------------------------------------------
     // Navigation - targets whichever pane last had focus, same as
-    // ipcMain.on('navigate'/'navigate-to-bookmark') in main.js.
+    // ipcMain.on('navigate') in main.js.
     // ---------------------------------------------------------------
     @JavascriptInterface
     public void navigate(String rawUrl) {
         activity.runOnUiThread(() -> activity.handleNavigate(rawUrl));
-    }
-
-    @JavascriptInterface
-    public void navigateToBookmark(String url) {
-        activity.runOnUiThread(() -> activity.handleNavigateToBookmark(url));
     }
 
     // ---------------------------------------------------------------
@@ -64,31 +59,6 @@ public class WebAppInterface {
     @JavascriptInterface
     public void closePane() {
         activity.runOnUiThread(activity::handleClosePane);
-    }
-
-    // ---------------------------------------------------------------
-    // Bookmarks - same as ipcMain.handle('get-bookmarks') / ipcMain.on('add-
-    // bookmark'/'edit-bookmark'/'delete-bookmark'). label/url are passed as
-    // a JSON string (JS does JSON.stringify({label,url}) before calling).
-    // ---------------------------------------------------------------
-    @JavascriptInterface
-    public String getBookmarksJson() {
-        return activity.handleGetBookmarksJson();
-    }
-
-    @JavascriptInterface
-    public void addBookmark(String bookmarkJson) {
-        activity.runOnUiThread(() -> activity.handleAddBookmark(bookmarkJson));
-    }
-
-    @JavascriptInterface
-    public void editBookmark(int index, String bookmarkJson) {
-        activity.runOnUiThread(() -> activity.handleEditBookmark(index, bookmarkJson));
-    }
-
-    @JavascriptInterface
-    public void deleteBookmark(int index) {
-        activity.runOnUiThread(() -> activity.handleDeleteBookmark(index));
     }
 
     // ---------------------------------------------------------------

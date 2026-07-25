@@ -5,7 +5,6 @@
   'use strict';
 
   var addressInput = document.getElementById('address-input');
-  var bookmarksInline = document.getElementById('bookmarks-inline');
   var btnFullscreen = document.getElementById('btn-fullscreen');
   var btnDownloads = document.getElementById('btn-downloads');
   var downloadsBadge = document.getElementById('downloads-badge');
@@ -16,17 +15,7 @@
   var btnSplitCol = document.getElementById('btn-split-col');
   var btnClosePane = document.getElementById('btn-close-pane');
 
-  var bmOverlay = document.getElementById('bm-modal-overlay');
-  var bmTitle = document.getElementById('bm-modal-title');
-  var bmUrlInput = document.getElementById('bm-modal-url');
-  var bmLabelInput = document.getElementById('bm-modal-label');
-  var bmCancelBtn = document.getElementById('bm-modal-cancel');
-  var bmOkBtn = document.getElementById('bm-modal-ok');
-
-  var bookmarks = [];
-  var editingIndex = -1; // -1 = adding a new bookmark
   var currentUrl = '';
-  var ctxMenuEl = null;
 
   // -----------------------------------------------------------------
   // Address bar
@@ -72,134 +61,6 @@
       addressInput.value = currentUrl;
     }
     btnClosePane.disabled = !state.hasSplit;
-  };
-
-  // -----------------------------------------------------------------
-  // Bookmarks
-  // -----------------------------------------------------------------
-  function renderBookmarks() {
-    bookmarksInline.innerHTML = '';
-
-    bookmarks.forEach(function (bm, index) {
-      var chip = document.createElement('button');
-      chip.className = 'bm-chip';
-      chip.textContent = bm.label || bm.url || 'Untitled';
-      chip.addEventListener('click', function () {
-        window.AndroidAPI.navigateToBookmark(bm.url);
-      });
-      chip.addEventListener('contextmenu', function (e) {
-        e.preventDefault();
-        showBookmarkContextMenu(e.clientX, e.clientY, index);
-      });
-      var pressTimer = null;
-      chip.addEventListener('touchstart', function (e) {
-        pressTimer = setTimeout(function () {
-          var touch = e.touches[0];
-          showBookmarkContextMenu(touch.clientX, touch.clientY, index);
-        }, 500);
-      });
-      chip.addEventListener('touchend', function () { clearTimeout(pressTimer); });
-      chip.addEventListener('touchmove', function () { clearTimeout(pressTimer); });
-      bookmarksInline.appendChild(chip);
-    });
-
-    var addChip = document.createElement('button');
-    addChip.className = 'bm-chip bm-add';
-    addChip.textContent = '+ Add';
-    addChip.addEventListener('click', function () { openBookmarkModal(-1); });
-    bookmarksInline.appendChild(addChip);
-  }
-
-  function showBookmarkContextMenu(x, y, index) {
-    closeContextMenu();
-    ctxMenuEl = document.createElement('div');
-    ctxMenuEl.className = 'bm-ctx-menu';
-
-    var editBtn = document.createElement('button');
-    editBtn.textContent = 'Edit';
-    editBtn.addEventListener('click', function () {
-      closeContextMenu();
-      openBookmarkModal(index);
-    });
-
-    var deleteBtn = document.createElement('button');
-    deleteBtn.textContent = 'Delete';
-    deleteBtn.style.color = 'var(--danger)';
-    deleteBtn.addEventListener('click', function () {
-      closeContextMenu();
-      window.AndroidAPI.deleteBookmark(index);
-    });
-
-    ctxMenuEl.appendChild(editBtn);
-    ctxMenuEl.appendChild(deleteBtn);
-    document.body.appendChild(ctxMenuEl);
-
-    var rect = ctxMenuEl.getBoundingClientRect();
-    var left = Math.min(x, window.innerWidth - rect.width - 8);
-    var top = Math.max(8, y - rect.height - 8);
-    ctxMenuEl.style.left = left + 'px';
-    ctxMenuEl.style.top = top + 'px';
-
-    setTimeout(function () {
-      document.addEventListener('click', closeContextMenuOnce);
-    }, 0);
-  }
-
-  function closeContextMenuOnce() {
-    closeContextMenu();
-    document.removeEventListener('click', closeContextMenuOnce);
-  }
-
-  function closeContextMenu() {
-    if (ctxMenuEl && ctxMenuEl.parentNode) ctxMenuEl.parentNode.removeChild(ctxMenuEl);
-    ctxMenuEl = null;
-  }
-
-  function openBookmarkModal(index) {
-    editingIndex = index;
-    if (index >= 0 && bookmarks[index]) {
-      bmTitle.textContent = 'Edit bookmark';
-      bmUrlInput.value = bookmarks[index].url || '';
-      bmLabelInput.value = bookmarks[index].label || '';
-    } else {
-      bmTitle.textContent = 'Add bookmark';
-      bmUrlInput.value = currentUrl || '';
-      bmLabelInput.value = '';
-    }
-    bmOverlay.classList.add('open');
-    setTimeout(function () { bmLabelInput.focus(); }, 0);
-  }
-
-  function closeBookmarkModal() {
-    bmOverlay.classList.remove('open');
-    editingIndex = -1;
-  }
-
-  bmCancelBtn.addEventListener('click', closeBookmarkModal);
-  bmOverlay.addEventListener('click', function (e) {
-    if (e.target === bmOverlay) closeBookmarkModal();
-  });
-
-  bmOkBtn.addEventListener('click', function () {
-    var url = bmUrlInput.value.trim();
-    var label = bmLabelInput.value.trim();
-    if (!url) return;
-    var payload = JSON.stringify({ label: label || url, url: url });
-    if (editingIndex >= 0) {
-      window.AndroidAPI.editBookmark(editingIndex, payload);
-    } else {
-      window.AndroidAPI.addBookmark(payload);
-    }
-    closeBookmarkModal();
-  });
-
-  window.onBookmarksUpdated = function (json) {
-    try {
-      bookmarks = JSON.parse(json) || [];
-    } catch (e) {
-      bookmarks = [];
-    }
-    renderBookmarks();
   };
 
   // -----------------------------------------------------------------
@@ -328,9 +189,8 @@
   };
 
   // -----------------------------------------------------------------
-  // Initial sync - bookmarks/downloads are pulled synchronously on load,
-  // active pane state arrives shortly after via onActivePaneState().
+  // Initial sync - downloads are pulled synchronously on load, active
+  // pane state arrives shortly after via onActivePaneState().
   // -----------------------------------------------------------------
-  try { window.onBookmarksUpdated(window.AndroidAPI.getBookmarksJson()); } catch (e) { renderBookmarks(); }
   try { window.onDownloadsUpdated(window.AndroidAPI.getDownloadsJson()); } catch (e) { renderDownloads(); }
 })();
