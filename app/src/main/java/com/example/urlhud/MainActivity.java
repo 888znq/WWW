@@ -106,6 +106,18 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
                 setActivePane(pane);
                 applyZoomStep(pane, -ZOOM_STEP);
             }
+        }, new PaneManager.ZoomIO() {
+            @Override
+            public float getZoom(WebView pane) {
+                Float z = zoomLevels.get(pane);
+                return z != null ? z : 0f;
+            }
+
+            @Override
+            public void setInitialZoom(WebView pane, float zoom) {
+                zoomLevels.put(pane, zoom);
+                if (zoom != 0f) pendingInitialZoom.add(pane); else pendingInitialZoom.remove(pane);
+            }
         });
 
         WebView firstPane = null;
@@ -416,6 +428,20 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
             pendingInitialZoom.remove(activePane);
             setActivePane(newActive);
             saveSession();
+
+            // The surviving pane just jumped from a fraction of the screen
+            // to full size (or a new fraction). The zoom is injected CSS
+            // (style.zoom + compensated vw/vh), and that doesn't reliably
+            // repaint itself across a WebView bounds change, so without
+            // this the pane can render blank/stale until the user touches
+            // it. Re-inject on the next frame, after the resize from
+            // render() has actually been laid out.
+            Float z = zoomLevels.get(newActive);
+            if (z != null && z != 0f) {
+                final WebView pane = newActive;
+                final float level = z;
+                pane.post(() -> applyZoomCss(pane, level));
+            }
         }
     }
 

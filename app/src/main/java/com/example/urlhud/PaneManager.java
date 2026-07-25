@@ -53,6 +53,22 @@ public class PaneManager {
         void onZoomOut(WebView pane);
     }
 
+    /**
+     * Lets PaneManager read/write each individual pane's zoom level for
+     * session persistence, without owning the zoom bookkeeping itself
+     * (MainActivity's zoomLevels map remains the single source of truth).
+     * Without this, session save/restore only knows about URLs and split
+     * layout - zoom has to be threaded through separately per leaf, or
+     * every restored pane ends up sharing one global zoom value instead of
+     * remembering its own.
+     */
+    public interface ZoomIO {
+        /** Current zoom level for this pane, for writing into the serialized tree. */
+        float getZoom(WebView pane);
+        /** Called right after a leaf's WebView is created during restore(), to seed its own saved zoom before the page loads. */
+        void setInitialZoom(WebView pane, float zoom);
+    }
+
     private static final String DEFAULT_SPLIT_URL = "https://example.com";
     private static final float DEFAULT_RATIO = 0.5f;
     private static final float MIN_RATIO = 0.15f;
@@ -113,6 +129,7 @@ public class PaneManager {
     private final FrameLayout container;
     private final WebViewFactory factory;
     private final ZoomListener zoomListener;
+    private final ZoomIO zoomIO;
     private final float density;
     private Node root;
     private WebView activePane;
@@ -122,11 +139,12 @@ public class PaneManager {
     // border lives in the wrapper's padding, not on the WebView itself).
     private final Map<WebView, FrameLayout> leafWrappers = new HashMap<>();
 
-    public PaneManager(Context context, FrameLayout container, WebViewFactory factory, ZoomListener zoomListener) {
+    public PaneManager(Context context, FrameLayout container, WebViewFactory factory, ZoomListener zoomListener, ZoomIO zoomIO) {
         this.context = context;
         this.container = container;
         this.factory = factory;
         this.zoomListener = zoomListener;
+        this.zoomIO = zoomIO;
         this.density = context.getResources().getDisplayMetrics().density;
     }
 
@@ -163,6 +181,12 @@ public class PaneManager {
         } else {
             String url = o.optString("url", DEFAULT_SPLIT_URL);
             WebView wv = factory.create(url);
+            // Older saved sessions won't have a "zoom" key - in that case
+            // leave whatever default the factory already seeded (the old,
+            // shared-global-value behavior) rather than forcing 0.
+            if (zoomIO != null && o.has("zoom")) {
+                zoomIO.setInitialZoom(wv, (float) o.optDouble("zoom", 0));
+            }
             return Node.newLeaf(wv);
         }
     }
@@ -205,6 +229,14 @@ public class PaneManager {
             if (grandparent.first == parent) grandparent.first = sibling; else grandparent.second = sibling;
         }
 
+        // WebView.destroy() must be called only after the view has been
+        // removed from the view hierarchy - destroying it while it's still
+        // attached (which render() would otherwise do a moment later via
+        // removeAllViews()) is what causes the closed pane's surface to
+        // stick around blank/stale on some WebView builds, sometimes even
+        // bleeding into the sibling's next layout pass. Detach explicitly
+        // first so destroy() always runs on an already-orphaned view.
+        detachFromParent(pane);
         pane.destroy();
         render();
         return firstLeaf(sibling);
@@ -244,6 +276,7 @@ public class PaneManager {
             o.put("type", "leaf");
             Object tag = node.webView.getTag();
             o.put("url", tag != null ? tag.toString() : DEFAULT_SPLIT_URL);
+            if (zoomIO != null) o.put("zoom", zoomIO.getZoom(node.webView));
         } else {
             o.put("type", "split");
             o.put("direction", node.direction);
