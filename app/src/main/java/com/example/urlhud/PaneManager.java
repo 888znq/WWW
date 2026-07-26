@@ -3,7 +3,6 @@ package com.example.urlhud;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
-import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -11,7 +10,6 @@ import android.view.ViewGroup;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -86,17 +84,6 @@ public class PaneManager {
     private static final int FOCUS_BORDER_DP = 2;
     private static final int FOCUS_BORDER_COLOR = 0x664A90E2;
 
-    // Per-pane zoom control: a small +/- pair pinned to each pane's own
-    // right edge, vertically centered. Unlike the focus border, this is
-    // always visible (even with a single pane, even in fullscreen) since
-    // it's the only way to zoom now that the bar's zoom buttons are gone.
-    private static final int ZOOM_CONTROL_WIDTH_DP = 28;
-    private static final int ZOOM_CONTROL_BUTTON_HEIGHT_DP = 28;
-    private static final int ZOOM_CONTROL_MARGIN_DP = 6;
-    private static final int ZOOM_CONTROL_CORNER_RADIUS_DP = 6;
-    private static final int ZOOM_CONTROL_BG_COLOR = 0xCC18181A;
-    private static final int ZOOM_CONTROL_BORDER_COLOR = 0x33FFFFFF;
-    private static final int ZOOM_CONTROL_TEXT_COLOR = 0xFFF2F2F2;
 
     private static class Node {
         boolean leaf;
@@ -365,9 +352,7 @@ public class PaneManager {
      * separating two split panes is the thin drag divider between them.
      * The focus-border ring (see refreshFocusBorders()) is painted as a
      * foreground overlay on top of this wrapper instead, so it never eats
-     * into that space either. Also anchors that pane's own zoom control to
-     * the wrapper's right edge, vertically centered, so it stays pinned to
-     * this specific pane through re-layouts.
+     * into that space either.
      */
     private FrameLayout wrapLeaf(WebView webView) {
         FrameLayout wrapper = new FrameLayout(context);
@@ -377,99 +362,8 @@ public class PaneManager {
         wrapper.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        FrameLayout.LayoutParams zoomLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        zoomLp.gravity = Gravity.CENTER_VERTICAL | Gravity.END;
-        zoomLp.setMargins(0, 0, dpToPx(ZOOM_CONTROL_MARGIN_DP), 0);
-        View zoomControl = createZoomControl(webView);
-        wrapper.addView(zoomControl, zoomLp);
-        // Belt-and-suspenders: guarantees the zoom control is the topmost
-        // child for both drawing AND touch dispatch, in case the WebView's
-        // own hardware layer ever won a Z-order tie against a same-index
-        // sibling (the class of bug where a button overlapping a WebView
-        // renders fine but silently never receives taps).
-        wrapper.bringChildToFront(zoomControl);
-
         leafWrappers.put(webView, wrapper);
         return wrapper;
-    }
-
-    /** Builds the persistent +/- zoom control pinned to one pane's right edge, vertically centered. */
-    private View createZoomControl(WebView pane) {
-        LinearLayout group = new LinearLayout(context);
-        group.setOrientation(LinearLayout.VERTICAL);
-        group.setBackground(zoomControlBackground());
-
-        int buttonSize = dpToPx(ZOOM_CONTROL_BUTTON_HEIGHT_DP);
-        int width = dpToPx(ZOOM_CONTROL_WIDTH_DP);
-
-        View zoomIn = zoomButton("+", pane, true);
-        View divider = new View(context);
-        divider.setBackgroundColor(ZOOM_CONTROL_BORDER_COLOR);
-        View zoomOut = zoomButton("\u2212", pane, false);
-
-        group.addView(zoomIn, new LinearLayout.LayoutParams(width, buttonSize));
-        group.addView(divider, new LinearLayout.LayoutParams(width, dpToPx(1)));
-        group.addView(zoomOut, new LinearLayout.LayoutParams(width, buttonSize));
-        return group;
-    }
-
-    private View zoomButton(String label, WebView pane, boolean isZoomIn) {
-        TextView button = new TextView(context);
-        button.setText(label);
-        button.setTextColor(ZOOM_CONTROL_TEXT_COLOR);
-        button.setTextSize(12);
-        button.setGravity(Gravity.CENTER);
-        button.setClickable(true);
-        button.setFocusable(true);
-
-        TypedValue outValue = new TypedValue();
-        context.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, outValue, true);
-        if (outValue.resourceId != 0) button.setBackgroundResource(outValue.resourceId);
-
-        button.setOnClickListener(v -> {
-            if (zoomListener == null) return;
-            if (isZoomIn) zoomListener.onZoomIn(pane); else zoomListener.onZoomOut(pane);
-        });
-
-        // Explicitly claim the whole touch gesture on ACTION_DOWN and fire
-        // the click ourselves on ACTION_UP, instead of trusting the default
-        // click detection inside View#onTouchEvent to win the gesture
-        // against the WebView sitting directly underneath. Without this, a
-        // DOWN event that isn't unambiguously consumed here can end up
-        // handled by the WebView instead, and the button never sees the
-        // matching UP - it looks like a normal button but silently never
-        // registers a tap.
-        button.setOnTouchListener((v, event) -> {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    v.setPressed(true);
-                    return true;
-                case MotionEvent.ACTION_UP:
-                    v.setPressed(false);
-                    if (event.getX() >= 0 && event.getX() <= v.getWidth()
-                            && event.getY() >= 0 && event.getY() <= v.getHeight()) {
-                        v.performClick();
-                    }
-                    return true;
-                case MotionEvent.ACTION_CANCEL:
-                    v.setPressed(false);
-                    return true;
-                default:
-                    return true;
-            }
-        });
-
-        return button;
-    }
-
-    private GradientDrawable zoomControlBackground() {
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.RECTANGLE);
-        bg.setColor(ZOOM_CONTROL_BG_COLOR);
-        bg.setStroke(dpToPx(1), ZOOM_CONTROL_BORDER_COLOR);
-        bg.setCornerRadius(dpToPx(ZOOM_CONTROL_CORNER_RADIUS_DP));
-        return bg;
     }
 
     /**
