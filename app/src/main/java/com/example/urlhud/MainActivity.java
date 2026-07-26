@@ -64,6 +64,7 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
     private SessionStore sessionStore;
     private ZoomStore zoomStore;
     private DownloadsController downloadsController;
+    private BookmarkStore bookmarkStore;
 
     private WebView activePane;
     private final Map<WebView, Float> zoomLevels = new HashMap<>();
@@ -92,6 +93,7 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
         zoomStore = new ZoomStore(this);
         persistedZoom = zoomStore.load();
         downloadsController = new DownloadsController(this, this);
+        bookmarkStore = new BookmarkStore(this);
 
         setupBarWebView();
         paneManager = new PaneManager(this, paneSlot, this::createPaneWebView, new PaneManager.ZoomListener() {
@@ -495,6 +497,41 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
     @Override
     public void onDownloadsChanged(org.json.JSONArray list) {
         runJs("window.onDownloadsUpdated && window.onDownloadsUpdated(" + list.toString() + ")");
+    }
+
+    public String handleGetBookmarksJson() {
+        return bookmarkStore.toJson();
+    }
+
+    public void handleAddBookmark(String bookmarkJson) {
+        try {
+            bookmarkStore.add(new JSONObject(bookmarkJson));
+        } catch (JSONException ignored) {
+            return;
+        }
+        pushBookmarksUpdated();
+    }
+
+    public void handleEditBookmark(int index, String bookmarkJson) {
+        try {
+            bookmarkStore.edit(index, new JSONObject(bookmarkJson));
+        } catch (JSONException ignored) {
+            return;
+        }
+        pushBookmarksUpdated();
+    }
+
+    public void handleDeleteBookmark(int index) {
+        bookmarkStore.delete(index);
+        pushBookmarksUpdated();
+    }
+
+    public void handleNavigateToBookmark(String url) {
+        handleNavigate(url);
+    }
+
+    private void pushBookmarksUpdated() {
+        runJs("window.onBookmarksUpdated && window.onBookmarksUpdated(" + bookmarkStore.toJson() + ")");
     }
 
     private void saveSession() {
