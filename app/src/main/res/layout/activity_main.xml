@@ -7,7 +7,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:background="#18181A">
+        android:background="#000432">
 
         <!-- Split-pane WebViews are added/removed here at runtime by PaneManager. -->
         <FrameLayout
@@ -17,11 +17,11 @@
             android:layout_weight="1" />
 
         <!-- Persistent bottom bar, hidden while in fullscreen (see MainActivity#handleToggleFullscreen).
-             52dp = url/toolbar row, laid out inside bar.html. -->
+             84dp = 42dp bookmark-bar row (0-9/A-Z folders) + 42dp url/toolbar row, both laid out inside bar.html. -->
         <WebView
             android:id="@+id/bar_webview"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
+            android:layout_height="84dp"
             android:background="#00000000" />
 
     </LinearLayout>

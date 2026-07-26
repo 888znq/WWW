@@ -334,6 +334,14 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
         saveSession();
     }
 
+    public void handleZoomIn() {
+        applyZoomStep(activePane, ZOOM_STEP);
+    }
+
+    public void handleZoomOut() {
+        applyZoomStep(activePane, -ZOOM_STEP);
+    }
+
     private void applyZoomStep(WebView pane, float step) {
         if (pane == null) return;
         

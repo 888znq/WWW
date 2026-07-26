@@ -62,6 +62,21 @@ public class WebAppInterface {
     }
 
     // ---------------------------------------------------------------
+    // Zoom - drives the toolbar's +/- buttons for the focused pane,
+    // reusing the same applyZoomStep() step size as the existing
+    // pinch-to-zoom gesture handling in PaneManager.ZoomListener.
+    // ---------------------------------------------------------------
+    @JavascriptInterface
+    public void zoomIn() {
+        activity.runOnUiThread(activity::handleZoomIn);
+    }
+
+    @JavascriptInterface
+    public void zoomOut() {
+        activity.runOnUiThread(activity::handleZoomOut);
+    }
+
+    // ---------------------------------------------------------------
     // Downloads - same as ipcMain.handle('get-downloads') / ipcMain.on
     // ('download-open-file'/'download-show-in-folder'/'download-cancel'/
     // 'download-remove'/'download-clear-completed').
@@ -94,5 +109,37 @@ public class WebAppInterface {
     @JavascriptInterface
     public void clearCompletedDownloads() {
         activity.runOnUiThread(activity::handleClearCompletedDownloads);
+    }
+
+    // ---------------------------------------------------------------
+    // Bookmarks - backs the 0-9/A-Z folder bar. Same shape as the
+    // downloads bridge: getBookmarksJson() reads already-serialized
+    // JSON synchronously, everything else hops to the UI thread.
+    // Bookmarks are plain {"label","url","folder"} objects; "folder"
+    // is one of the 36 keys and BookmarkStore stores it opaquely.
+    // ---------------------------------------------------------------
+    @JavascriptInterface
+    public String getBookmarksJson() {
+        return activity.handleGetBookmarksJson();
+    }
+
+    @JavascriptInterface
+    public void addBookmark(String bookmarkJson) {
+        activity.runOnUiThread(() -> activity.handleAddBookmark(bookmarkJson));
+    }
+
+    @JavascriptInterface
+    public void editBookmark(int index, String bookmarkJson) {
+        activity.runOnUiThread(() -> activity.handleEditBookmark(index, bookmarkJson));
+    }
+
+    @JavascriptInterface
+    public void deleteBookmark(int index) {
+        activity.runOnUiThread(() -> activity.handleDeleteBookmark(index));
+    }
+
+    @JavascriptInterface
+    public void navigateToBookmark(String url) {
+        activity.runOnUiThread(() -> activity.handleNavigateToBookmark(url));
     }
 }
