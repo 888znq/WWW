@@ -228,6 +228,7 @@
       fpAddInput.value = currentUrl || '';
       renderFolderList();
       folderPanel.classList.add('open');
+      requestFolderPanelHeight();
     }
 
     function closeFolderPanel() {
@@ -235,6 +236,22 @@
       if (btn) btn.classList.remove('active');
       activeFolder = null;
       folderPanel.classList.remove('open');
+      try { window.AndroidAPI.setBarExtraHeight(0); } catch (e) {}
+    }
+
+    // Sizes the bar (and so the popup) to roughly fit however many
+    // bookmarks are in this folder - a couple of entries stay small,
+    // a long folder caps out and scrolls instead of growing forever.
+    function requestFolderPanelHeight() {
+      var count = 0;
+      for (var i = 0; i < bookmarks.length; i++) {
+        if (bookmarks[i] && bookmarks[i].folder === activeFolder) count++;
+      }
+      var chrome = 74; // header + add-row
+      var perItem = 28;
+      var desired = chrome + Math.min(count, 6) * perItem;
+      desired = Math.max(140, Math.min(desired, 260));
+      try { window.AndroidAPI.setBarExtraHeight(desired - 84); } catch (e) {}
     }
 
     fpCloseBtn.addEventListener('click', closeFolderPanel);
@@ -312,7 +329,10 @@
         bookmarks = [];
       }
       refreshFolderIndicators();
-      if (activeFolder) renderFolderList();
+      if (activeFolder) {
+        renderFolderList();
+        requestFolderPanelHeight();
+      }
     };
 
     // ---- NEW: quick-add bookmark popup ("+" button beside the address bar) ----
@@ -340,55 +360,39 @@
     var qbmSaveBtn = document.getElementById('qbm-save-btn');
     var qbmNameInput = document.getElementById('qbm-name-input');
     var qbmUrlPreview = document.getElementById('qbm-url-preview');
-    var qbmFolderGrid = document.getElementById('qbm-folder-grid');
-    var qbmFolderManual = false;
+    var qbmFolderValue = document.getElementById('qbm-folder-value');
     var qbmSelectedFolder = '0';
-
-    FOLDER_KEYS.forEach(function (key) {
-      var opt = document.createElement('button');
-      opt.type = 'button';
-      opt.className = 'qbm-folder-opt';
-      opt.dataset.folder = key;
-      opt.textContent = key;
-      opt.addEventListener('click', function () {
-        qbmFolderManual = true;
-        setQbmFolder(key);
-      });
-      qbmFolderGrid.appendChild(opt);
-    });
 
     function setQbmFolder(key) {
       qbmSelectedFolder = key;
-      var opts = qbmFolderGrid.querySelectorAll('.qbm-folder-opt');
-      for (var i = 0; i < opts.length; i++) {
-        opts[i].classList.toggle('selected', opts[i].dataset.folder === key);
-      }
+      qbmFolderValue.textContent = key;
     }
 
     function openQuickBookmark() {
       if (!currentUrl) return;
       qbmUrlPreview.textContent = currentUrl;
-      qbmFolderManual = false;
       var name = deriveBookmarkName(currentUrl);
       qbmNameInput.value = name;
       setQbmFolder(deriveFolderFromName(name));
       quickBmOverlay.classList.add('open');
+      try { window.AndroidAPI.setBarExtraHeight(200 - 84); } catch (e) {}
       qbmNameInput.focus();
       qbmNameInput.select();
     }
 
     function closeQuickBookmark() {
       quickBmOverlay.classList.remove('open');
+      try { window.AndroidAPI.setBarExtraHeight(0); } catch (e) {}
     }
 
     btnAddBookmark.addEventListener('click', openQuickBookmark);
     qbmCloseBtn.addEventListener('click', closeQuickBookmark);
     qbmCancelBtn.addEventListener('click', closeQuickBookmark);
 
+    // Live: the folder always tracks the first letter of whatever's typed,
+    // so it's clear which folder it'll land in before you hit Save.
     qbmNameInput.addEventListener('input', function () {
-      if (!qbmFolderManual) {
-        setQbmFolder(deriveFolderFromName(qbmNameInput.value));
-      }
+      setQbmFolder(deriveFolderFromName(qbmNameInput.value));
     });
 
     qbmSaveBtn.addEventListener('click', function () {

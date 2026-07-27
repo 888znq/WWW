@@ -142,4 +142,15 @@ public class WebAppInterface {
     public void navigateToBookmark(String url) {
         activity.runOnUiThread(() -> activity.handleNavigateToBookmark(url));
     }
+
+    // ---------------------------------------------------------------
+    // Lets the folder popup grow the bar taller than its normal 84dp so
+    // the bookmark list has real room (pops upward, on top of the
+    // toolbar, instead of being squeezed inside it). extraDp = 0
+    // collapses it back to the normal height.
+    // ---------------------------------------------------------------
+    @JavascriptInterface
+    public void setBarExtraHeight(int extraDp) {
+        activity.runOnUiThread(() -> activity.handleSetBarExtraHeight(extraDp));
+    }
 }

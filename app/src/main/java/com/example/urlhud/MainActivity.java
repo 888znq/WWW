@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.os.Message;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.webkit.CookieManager;
@@ -56,6 +57,14 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
             "olymptrade.com",
             "pocketoption.com"
     );
+
+    // Base bar_webview height (see activity_main.xml). The folder popup
+    // temporarily grows the bar taller than this - anchored at the bottom,
+    // so the extra room appears upward on top of pane_slot - so the
+    // bookmark list has real space to sit in instead of being squeezed
+    // into the normal 84dp strip. Capped so pane_slot never gets crushed.
+    private static final int BAR_BASE_HEIGHT_DP = 84;
+    private static final int BAR_MAX_EXTRA_DP = 240;
 
     private FrameLayout paneSlot;
     private WebView barWebView;
@@ -528,6 +537,19 @@ public class MainActivity extends AppCompatActivity implements DownloadsControll
 
     public void handleNavigateToBookmark(String url) {
         handleNavigate(url);
+    }
+
+    // Called from bar.js when the folder popup opens/closes, so it can grow
+    // taller than the normal 84dp strip (upward, since bar_webview is
+    // bottom-docked in the LinearLayout and pane_slot simply shrinks to make
+    // room) instead of being stuck inside it. extraDp is however much taller
+    // than BAR_BASE_HEIGHT_DP the popup's content needs; 0 collapses it back.
+    public void handleSetBarExtraHeight(int extraDp) {
+        int clamped = Math.max(0, Math.min(extraDp, BAR_MAX_EXTRA_DP));
+        ViewGroup.LayoutParams lp = barWebView.getLayoutParams();
+        float density = getResources().getDisplayMetrics().density;
+        lp.height = Math.round((BAR_BASE_HEIGHT_DP + clamped) * density);
+        barWebView.setLayoutParams(lp);
     }
 
     private void pushBookmarksUpdated() {
