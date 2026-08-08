@@ -81,7 +81,7 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        rootContainer = findViewById(R.id.root_container);
+        rootContainer = findViewById(R.id.pane_slot);
         barWebView = findViewById(R.id.bar_webview);
         sessionStore = new SessionStore(this);
 
