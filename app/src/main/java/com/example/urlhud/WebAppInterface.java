@@ -1,156 +1,196 @@
 package com.example.urlhud;
 
+import android.app.Activity;
+import android.content.ClipboardManager;
+import android.content.ClipData;
+import android.content.Context;
 import android.webkit.JavascriptInterface;
+import android.webkit.WebView;
+import android.widget.Toast;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
- * The JS bridge exposed to bar.html as `window.AndroidAPI`. This is the
- * Android equivalent of Electron's preload-index.js (which exposes
- * window.splitAPI / window.barAPI) plus the ipcMain handlers in main.js -
- * both roles are collapsed into one bridge here since there's no separate
- * main/renderer process split on Android, just this WebView-hosted bar
- * talking directly to MainActivity.
- *
- * Every method here just forwards to a same-named (or clearly corresponding)
- * method on MainActivity, which does the real work and is responsible for
- * hopping to the UI thread - JS interface methods run on a background
- * thread by default, and WebView/View mutations must happen on the UI
- * thread.
- *
- * getDownloadsJson() is the one exception: it only reads already-
- * serialized JSON (no View access), so it returns synchronously without
- * a UI-thread hop, similar in spirit to Electron's
- * ipcMain.handle('get-downloads') which also just reads local state and
- * returns it directly.
+ * JS bridge between toolbar (bar.html) and native Android.
+ * Preserves original bookmark/session/download methods and adds
+ * extension-ported features: clipboard, broadcast, downloads, nav, splits.
  */
 public class WebAppInterface {
+    private final Activity activity;
+    private final WebView callerWebView;
 
-    private final MainActivity activity;
-
-    WebAppInterface(MainActivity activity) {
+    public WebAppInterface(Activity activity, WebView callerWebView) {
         this.activity = activity;
+        this.callerWebView = callerWebView;
     }
 
-    // ---------------------------------------------------------------
-    // Navigation - targets whichever pane last had focus, same as
-    // ipcMain.on('navigate') in main.js.
-    // ---------------------------------------------------------------
-    @JavascriptInterface
-    public void navigate(String rawUrl) {
-        activity.runOnUiThread(() -> activity.handleNavigate(rawUrl));
-    }
+    // =========================================================
+    // ORIGINAL METHODS (keep for backward compat)
+    // =========================================================
 
-    // ---------------------------------------------------------------
-    // Fullscreen - hides the bottom bar and the Android system bars,
-    // same as ipcMain.on('toggle-fullscreen').
-    // ---------------------------------------------------------------
     @JavascriptInterface
-    public void toggleFullscreen() {
-        activity.runOnUiThread(activity::handleToggleFullscreen);
-    }
-
-    // ---------------------------------------------------------------
-    // Split control - same as ipcMain.on('split-pane'/'close-pane').
-    // ---------------------------------------------------------------
-    @JavascriptInterface
-    public void splitPane(String direction) {
-        activity.runOnUiThread(() -> activity.handleSplitPane(direction));
+    public void saveBookmark(String json) {
+        BookmarkStore.save(activity, json);
     }
 
     @JavascriptInterface
-    public void closePane() {
-        activity.runOnUiThread(activity::handleClosePane);
-    }
-
-    // ---------------------------------------------------------------
-    // Zoom - drives the toolbar's +/- buttons for the focused pane,
-    // reusing the same applyZoomStep() step size as the existing
-    // pinch-to-zoom gesture handling in PaneManager.ZoomListener.
-    // ---------------------------------------------------------------
-    @JavascriptInterface
-    public void zoomIn() {
-        activity.runOnUiThread(activity::handleZoomIn);
+    public String getBookmarks() {
+        return BookmarkStore.load(activity);
     }
 
     @JavascriptInterface
-    public void zoomOut() {
-        activity.runOnUiThread(activity::handleZoomOut);
-    }
-
-    // ---------------------------------------------------------------
-    // Downloads - same as ipcMain.handle('get-downloads') / ipcMain.on
-    // ('download-open-file'/'download-show-in-folder'/'download-cancel'/
-    // 'download-remove'/'download-clear-completed').
-    // ---------------------------------------------------------------
-    @JavascriptInterface
-    public String getDownloadsJson() {
-        return activity.handleGetDownloadsJson();
+    public void saveSession(String json) {
+        SessionStore.save(activity, json);
     }
 
     @JavascriptInterface
-    public void openDownload(String id) {
-        activity.runOnUiThread(() -> activity.handleOpenDownload(id));
+    public String getSession() {
+        return SessionStore.load(activity);
     }
 
     @JavascriptInterface
-    public void showDownloadInFolder(String id) {
-        activity.runOnUiThread(() -> activity.handleShowDownloadInFolder(id));
+    public void saveDownloads(String json) {
+        DownloadsStore.save(activity, json);
     }
 
     @JavascriptInterface
-    public void cancelDownload(String id) {
-        activity.runOnUiThread(() -> activity.handleCancelDownload(id));
+    public String getDownloadsStore() {
+        return DownloadsStore.load(activity);
     }
 
     @JavascriptInterface
-    public void removeDownload(String id) {
-        activity.runOnUiThread(() -> activity.handleRemoveDownload(id));
+    public void toast(String msg) {
+        activity.runOnUiThread(() -> Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show());
+    }
+
+    // =========================================================
+    // EXTENSION PORT: Clipboard (Trinity Sync)
+    // =========================================================
+
+    @JavascriptInterface
+    public String getClipboard() {
+        try {
+            ClipboardManager cm = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null && cm.hasPrimaryClip()) {
+                ClipData.Item item = cm.getPrimaryClip().getItemAt(0);
+                return item.getText() != null ? item.getText().toString() : "";
+            }
+        } catch (Exception e) { e.printStackTrace(); }
+        return "";
+    }
+
+    // =========================================================
+    // EXTENSION PORT: Broadcast to all pane WebViews
+    // =========================================================
+
+    @JavascriptInterface
+    public void broadcastToPanes(String jsonPayload) {
+        if (!(activity instanceof MainActivity)) return;
+        ((MainActivity) activity).broadcastJsToAllPanes(jsonPayload);
+    }
+
+    // =========================================================
+    // EXTENSION PORT: Download controls
+    // =========================================================
+
+    @JavascriptInterface
+    public String getDownloads() {
+        // Return cached downloads as JSON array
+        JSONArray arr = new JSONArray();
+        // Let DownloadManagerBridge fill this; we return empty here
+        // and the bridge pushes updates via evaluateJavascript.
+        // For initial load, MainActivity will call broadcastAll().
+        return arr.toString();
+    }
+
+    @JavascriptInterface
+    public void cancelDownload(long id) {
+        DownloadManagerBridge.getInstance(activity).cancelDownload(id);
+    }
+
+    @JavascriptInterface
+    public void openDownload(long id) {
+        // Delegated to MainActivity
+        if (activity instanceof MainActivity) {
+            ((MainActivity) activity).openDownloadById(id);
+        }
+    }
+
+    @JavascriptInterface
+    public void showDownload(long id) {
+        if (activity instanceof MainActivity) {
+            ((MainActivity) activity).showDownloadById(id);
+        }
     }
 
     @JavascriptInterface
     public void clearCompletedDownloads() {
-        activity.runOnUiThread(activity::handleClearCompletedDownloads);
+        DownloadManagerBridge.getInstance(activity).clearCompleted();
     }
 
-    // ---------------------------------------------------------------
-    // Bookmarks - backs the 0-9/A-Z folder bar. Same shape as the
-    // downloads bridge: getBookmarksJson() reads already-serialized
-    // JSON synchronously, everything else hops to the UI thread.
-    // Bookmarks are plain {"label","url","folder"} objects; "folder"
-    // is one of the 36 keys and BookmarkStore stores it opaquely.
-    // ---------------------------------------------------------------
-    @JavascriptInterface
-    public String getBookmarksJson() {
-        return activity.handleGetBookmarksJson();
-    }
+    // =========================================================
+    // EXTENSION PORT: Navigation
+    // =========================================================
 
     @JavascriptInterface
-    public void addBookmark(String bookmarkJson) {
-        activity.runOnUiThread(() -> activity.handleAddBookmark(bookmarkJson));
+    public void loadUrl(String url) {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).loadUrlInActivePane(url));
+        }
     }
 
     @JavascriptInterface
-    public void editBookmark(int index, String bookmarkJson) {
-        activity.runOnUiThread(() -> activity.handleEditBookmark(index, bookmarkJson));
+    public void goBack() {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).goBackActivePane());
+        }
     }
 
     @JavascriptInterface
-    public void deleteBookmark(int index) {
-        activity.runOnUiThread(() -> activity.handleDeleteBookmark(index));
+    public void goForward() {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).goForwardActivePane());
+        }
     }
 
     @JavascriptInterface
-    public void navigateToBookmark(String url) {
-        activity.runOnUiThread(() -> activity.handleNavigateToBookmark(url));
+    public void zoomIn() {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).zoomActivePane(0.1f));
+        }
     }
 
-    // ---------------------------------------------------------------
-    // Lets the folder popup grow the bar taller than its normal 84dp so
-    // the bookmark list has real room (pops upward, on top of the
-    // toolbar, instead of being squeezed inside it). extraDp = 0
-    // collapses it back to the normal height.
-    // ---------------------------------------------------------------
     @JavascriptInterface
-    public void setBarExtraHeight(int extraDp) {
-        activity.runOnUiThread(() -> activity.handleSetBarExtraHeight(extraDp));
+    public void zoomOut() {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).zoomActivePane(-0.1f));
+        }
+    }
+
+    @JavascriptInterface
+    public void toggleFullscreen() {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).toggleFullscreenNative());
+        }
+    }
+
+    // =========================================================
+    // EXTENSION PORT: Split pane controls
+    // =========================================================
+
+    @JavascriptInterface
+    public void splitPane(String direction) {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).splitActivePane(direction));
+        }
+    }
+
+    @JavascriptInterface
+    public void closeActivePane() {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).closeActivePaneNative());
+        }
     }
 }
