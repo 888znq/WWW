@@ -141,30 +141,55 @@ function renderSplit(node) {
 
 function attachResizerEvents(resizerEl, splitNode) {
   let dragging = false;
-  resizerEl.addEventListener('mousedown', (e) => {
-    dragging = true; resizerEl.classList.add('active');
+
+  function startDrag(e) {
+    dragging = true; 
+    resizerEl.classList.add('active');
     document.body.classList.add('dragging'); 
     document.body.style.cursor = splitNode.direction === 'row' ? 'col-resize' : 'row-resize'; 
     document.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
-    e.preventDefault();
-  });
-  window.addEventListener('mousemove', (e) => {
+    
+    if (e.cancelable) e.preventDefault();
+  }
+
+  function doDrag(e) {
     if (!dragging) return;
+    
+    let clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+    let clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+
     const rect = splitNode.el.getBoundingClientRect();
-    let percent = splitNode.direction === 'row' ? ((e.clientX - rect.left) / rect.width) * 100 : ((e.clientY - rect.top) / rect.height) * 100;
+    let percent = splitNode.direction === 'row' 
+        ? ((clientX - rect.left) / rect.width) * 100 
+        : ((clientY - rect.top) / rect.height) * 100;
+        
     percent = Math.max(MIN_PERCENT, Math.min(MAX_PERCENT, percent));
     splitNode.ratio = percent;
-    splitNode.firstWrap.style.flex = percent + ' 1 0'; splitNode.secondWrap.style.flex = (100 - percent) + ' 1 0';
-  });
-  function stop() {
+    splitNode.firstWrap.style.flex = percent + ' 1 0'; 
+    splitNode.secondWrap.style.flex = (100 - percent) + ' 1 0';
+  }
+
+  function stopDrag() {
     if (!dragging) return;
-    dragging = false; resizerEl.classList.remove('active');
+    dragging = false; 
+    resizerEl.classList.remove('active');
     document.body.classList.remove('dragging');
     document.body.style.cursor = ''; 
     document.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
     scheduleTabsSave();
   }
-  window.addEventListener('mouseup', stop); window.addEventListener('mouseleave', stop);
+
+  // Desktop Mouse Events
+  resizerEl.addEventListener('mousedown', startDrag);
+  window.addEventListener('mousemove', doDrag);
+  window.addEventListener('mouseup', stopDrag);
+  window.addEventListener('mouseleave', stopDrag);
+
+  // Mobile Touch Events
+  resizerEl.addEventListener('touchstart', startDrag, { passive: false });
+  window.addEventListener('touchmove', doDrag, { passive: false });
+  window.addEventListener('touchend', stopDrag);
+  window.addEventListener('touchcancel', stopDrag);
 }
 
 function focusFirstLeaf(node) {
