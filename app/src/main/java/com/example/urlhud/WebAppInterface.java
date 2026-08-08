@@ -15,49 +15,55 @@ import org.json.JSONObject;
 /**
  * JS bridge between toolbar (bar.html) and native Android.
  * Preserves original bookmark/session/download methods and adds
- * extension-ported features: clipboard, broadcast, downloads, nav, splits.
+ * extension-ported features: clipboard, broadcast, downloads, nav, splits,
+ * and multi-account session switching.
  */
 public class WebAppInterface {
     private final Activity activity;
     private final WebView callerWebView;
+    private final BookmarkStore bookmarkStore;
+    private final DownloadsStore downloadsStore;
 
     public WebAppInterface(Activity activity, WebView callerWebView) {
         this.activity = activity;
         this.callerWebView = callerWebView;
+        this.bookmarkStore = new BookmarkStore(activity);
+        this.downloadsStore = new DownloadsStore(activity);
     }
 
     // =========================================================
     // ORIGINAL METHODS (keep for backward compat)
     // =========================================================
+    // Note: bar.js doesn't currently call these directly - bookmarks are
+    // driven live off Firebase RTDB, and session/download state is owned by
+    // MainActivity - but they're kept working (and building) against the
+    // real BookmarkStore/DownloadsStore APIs for anything that still expects
+    // this bridge surface.
 
     @JavascriptInterface
     public void saveBookmark(String json) {
-        BookmarkStore.save(activity, json);
+        bookmarkStore.save(json);
     }
 
     @JavascriptInterface
     public String getBookmarks() {
-        return BookmarkStore.load(activity);
-    }
-
-    @JavascriptInterface
-    public void saveSession(String json) {
-        SessionStore.save(activity, json);
-    }
-
-    @JavascriptInterface
-    public String getSession() {
-        return SessionStore.load(activity);
+        return bookmarkStore.load();
     }
 
     @JavascriptInterface
     public void saveDownloads(String json) {
-        DownloadsStore.save(activity, json);
+        try {
+            JSONArray arr = new JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject record = arr.optJSONObject(i);
+                if (record != null) downloadsStore.upsert(record);
+            }
+        } catch (JSONException ignored) {}
     }
 
     @JavascriptInterface
     public String getDownloadsStore() {
-        return DownloadsStore.load(activity);
+        return downloadsStore.load().toString();
     }
 
     @JavascriptInterface
@@ -97,12 +103,10 @@ public class WebAppInterface {
 
     @JavascriptInterface
     public String getDownloads() {
-        // Return cached downloads as JSON array
-        JSONArray arr = new JSONArray();
-        // Let DownloadManagerBridge fill this; we return empty here
-        // and the bridge pushes updates via evaluateJavascript.
-        // For initial load, MainActivity will call broadcastAll().
-        return arr.toString();
+        // Live snapshot from the same bridge that pushes onDownloadUpdate/
+        // onDownloadsList - previously this always returned "[]", so bar.js's
+        // 800ms poll wiped out real progress almost as soon as it arrived.
+        return DownloadManagerBridge.getInstance(activity).getDownloadsJson();
     }
 
     @JavascriptInterface
@@ -191,6 +195,39 @@ public class WebAppInterface {
     public void closeActivePane() {
         if (activity instanceof MainActivity) {
             activity.runOnUiThread(() -> ((MainActivity) activity).closeActivePaneNative());
+        }
+    }
+
+    // =========================================================
+    // EXTENSION PORT: Multi-account session switcher
+    // =========================================================
+
+    @JavascriptInterface
+    public String listSessions() {
+        if (activity instanceof MainActivity) {
+            return ((MainActivity) activity).listSessionsJson();
+        }
+        return "{\"sessions\":[],\"activeId\":null}";
+    }
+
+    @JavascriptInterface
+    public void addSession(String name) {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).addSessionNative(name));
+        }
+    }
+
+    @JavascriptInterface
+    public void switchSession(String id) {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).switchSessionNative(id));
+        }
+    }
+
+    @JavascriptInterface
+    public void closeSession(String id) {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> ((MainActivity) activity).closeSessionNative(id));
         }
     }
 }

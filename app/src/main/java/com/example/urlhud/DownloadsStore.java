@@ -8,8 +8,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * Persists finished/cancelled/interrupted download records (in-flight ones
- * are memory-only, see DownloadsController's class doc). Records are keyed
+ * Persists finished/cancelled/interrupted download records. In-flight
+ * downloads are tracked only in memory by DownloadManagerBridge and pushed
+ * live to bar.js; only terminal states get written here. Records are keyed
  * by their "id" field for upsert/remove.
  */
 public class DownloadsStore {

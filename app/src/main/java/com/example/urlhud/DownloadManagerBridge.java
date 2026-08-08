@@ -57,7 +57,7 @@ public class DownloadManagerBridge {
         if (pollRunnable != null) handler.removeCallbacks(pollRunnable);
     }
 
-    private void pollDownloads() {
+    private synchronized void pollDownloads() {
         if (dm == null) return;
         DownloadManager.Query query = new DownloadManager.Query();
         Cursor cursor = dm.query(query);
@@ -120,13 +120,27 @@ public class DownloadManagerBridge {
     }
 
     public void broadcastAll() {
-        JSONArray arr = new JSONArray();
-        for (JSONObject o : activeDownloads.values()) arr.put(o);
+        String json = getDownloadsJson();
         if (barWebView == null) return;
         String js = "javascript:(function(){" +
-            "try{ window.onDownloadsList && window.onDownloadsList(" + arr.toString() + "); }catch(e){}" +
+            "try{ window.onDownloadsList && window.onDownloadsList(" + json + "); }catch(e){}" +
             "})();";
         barWebView.evaluateJavascript(js, null);
+    }
+
+    /**
+     * Current snapshot of tracked downloads as a JSON array string.
+     *
+     * bar.js's pollDownloads() calls this (via WebAppInterface.getDownloads())
+     * every 800ms as a belt-and-suspenders refresh alongside the push updates
+     * from broadcastUpdate()/broadcastAll() - it must reflect the same live
+     * data those pushes send, or the poll clobbers real progress with an
+     * empty list faster than the eye can see it.
+     */
+    public synchronized String getDownloadsJson() {
+        JSONArray arr = new JSONArray();
+        for (JSONObject o : activeDownloads.values()) arr.put(o);
+        return arr.toString();
     }
 
     public void cancelDownload(long id) {

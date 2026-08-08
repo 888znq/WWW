@@ -256,6 +256,31 @@ public class PaneManager {
         return root != null && !root.leaf;
     }
 
+    /**
+     * Destroys every WebView in the current tree and clears the on-screen
+     * container, without leaving a single surviving pane behind the way
+     * closePane() insists on. Used when switching to a completely different
+     * pane tree (e.g. an account/session switch) rather than closing panes
+     * one at a time within the same tree.
+     */
+    public void destroyAll() {
+        if (root != null) destroyNode(root);
+        root = null;
+        activePane = null;
+        container.removeAllViews();
+        leafWrappers.clear();
+    }
+
+    private void destroyNode(Node node) {
+        if (node.leaf) {
+            detachFromParent(node.webView);
+            node.webView.destroy();
+        } else {
+            destroyNode(node.first);
+            destroyNode(node.second);
+        }
+    }
+
     /** Serializes the current tree, storing each leaf's last-known URL via its View tag, and each split's current divider ratio. */
     public JSONObject serialize() {
         if (root == null) return null;

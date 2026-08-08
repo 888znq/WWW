@@ -30,9 +30,17 @@ let activeFolder = null;
 let lastClipboardText = '';
 let currentUrl = '';
 let pendingPasswordSave = null;
+let sessions = [];
+let activeSessionId = null;
 
 // --- DOM refs ---
 const addressInput = document.getElementById('address-input');
+const accountDropdownBtn = document.getElementById('account-dropdown-btn');
+const accountDropdownLabel = document.getElementById('account-dropdown-label');
+const accountDropdownMenu = document.getElementById('account-dropdown-menu');
+const tabAddBtn = document.getElementById('tab-add-btn');
+const tabNameInputContainer = document.getElementById('tab-name-input-container');
+const tabNameInput = document.getElementById('tab-name-input');
 const bookmarkBar = document.getElementById('bookmark-bar');
 const folderPanel = document.getElementById('folder-panel');
 const fpTitle = document.getElementById('fp-title');
@@ -118,6 +126,94 @@ document.getElementById('btn-fullscreen').addEventListener('click', () => safeCa
 document.getElementById('btn-split-row').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.splitPane, 'row'));
 document.getElementById('btn-split-col').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.splitPane, 'column'));
 document.getElementById('btn-close-pane').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.closeActivePane));
+
+// =========================================================
+// Multi-Account Session Switcher
+// =========================================================
+accountDropdownBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    accountDropdownMenu.classList.toggle('open');
+    accountDropdownBtn.classList.toggle('open');
+});
+
+function closeAccountDropdown() {
+    accountDropdownMenu.classList.remove('open');
+    accountDropdownBtn.classList.remove('open');
+}
+
+function renderAccountSwitcher() {
+    const active = sessions.find(s => s.id === activeSessionId);
+    accountDropdownLabel.textContent = active ? active.name : 'No accounts';
+    accountDropdownMenu.innerHTML = '';
+
+    if (!sessions.length) {
+        accountDropdownMenu.innerHTML = '<div class="account-menu-empty">No accounts yet</div>';
+        return;
+    }
+
+    sessions.forEach((s) => {
+        const item = document.createElement('div');
+        item.className = 'account-item' + (s.id === activeSessionId ? ' active' : '');
+        item.addEventListener('click', () => {
+            if (s.id !== activeSessionId) safeCall(window.AndroidAPI && AndroidAPI.switchSession, s.id);
+            closeAccountDropdown();
+        });
+
+        const name = document.createElement('span');
+        name.className = 'account-item-name';
+        name.textContent = s.name;
+        item.appendChild(name);
+
+        if (sessions.length > 1) {
+            const close = document.createElement('button');
+            close.className = 'account-item-close';
+            close.textContent = '✕';
+            close.title = 'Close account';
+            close.onclick = (e) => { e.stopPropagation(); safeCall(window.AndroidAPI && AndroidAPI.closeSession, s.id); };
+            item.appendChild(close);
+        }
+
+        accountDropdownMenu.appendChild(item);
+    });
+}
+
+// Pushed from MainActivity whenever the session list or active session changes
+window.onSessionsUpdated = function(msg) {
+    sessions = (msg && Array.isArray(msg.sessions)) ? msg.sessions : [];
+    activeSessionId = msg ? (msg.activeId || null) : null;
+    renderAccountSwitcher();
+};
+
+// Fetch the current session list once on load, in case bar.html finished
+// loading before MainActivity had a chance to push the first update.
+(function initSessions() {
+    try {
+        const raw = safeCall(window.AndroidAPI && AndroidAPI.listSessions);
+        if (raw) window.onSessionsUpdated(JSON.parse(raw));
+    } catch (e) {}
+})();
+
+tabAddBtn.addEventListener('click', () => {
+    tabAddBtn.style.display = 'none';
+    tabNameInputContainer.style.display = 'flex';
+    tabNameInput.value = '';
+    tabNameInput.focus();
+});
+
+function closeAddSessionInput() {
+    tabNameInputContainer.style.display = 'none';
+    tabAddBtn.style.display = 'flex';
+}
+document.getElementById('tab-name-cancel').addEventListener('click', closeAddSessionInput);
+document.getElementById('tab-name-confirm').addEventListener('click', () => {
+    const val = tabNameInput.value.trim();
+    if (val) safeCall(window.AndroidAPI && AndroidAPI.addSession, val);
+    closeAddSessionInput();
+});
+tabNameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('tab-name-confirm').click();
+    if (e.key === 'Escape') document.getElementById('tab-name-cancel').click();
+});
 
 // =========================================================
 // Bookmarks (Firebase synced, A-Z folders)
@@ -379,6 +475,7 @@ setInterval(async () => {
 document.addEventListener('click', (e) => {
     if (folderPanel && !folderPanel.contains(e.target) && !e.target.classList.contains('folder-btn')) closeFolderPanel();
     if (downloadsPanel && !downloadsPanel.contains(e.target) && e.target.id !== 'btn-downloads') downloadsPanel.classList.remove('open');
+    if (accountDropdownMenu && !accountDropdownMenu.contains(e.target) && !accountDropdownBtn.contains(e.target)) closeAccountDropdown();
 });
 
 // =========================================================

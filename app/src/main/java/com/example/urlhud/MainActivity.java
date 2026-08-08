@@ -19,6 +19,7 @@ import android.webkit.WebView;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -61,6 +62,13 @@ public class MainActivity extends Activity {
     private final List<WebView> allPaneWebViews = new ArrayList<>();
     private final Map<WebView, Float> zoomLevels = new HashMap<>();
 
+    // Multi-account sessions (extension's tabs array equivalent) - each
+    // session owns its own pane tree; only the active one is actually
+    // mounted in PaneManager at any given time.
+    private final List<SessionStore.Session> sessions = new ArrayList<>();
+    private String activeSessionId;
+    private int sessionIdCounter = 0;
+
     // Bridges
     private DownloadManagerBridge downloadBridge;
     private ClipboardBridge clipboardBridge;
@@ -81,24 +89,121 @@ public class MainActivity extends Activity {
         setupPaneManager();
         setupDownloads();
 
-        // Restore or create initial pane
-        WebView initialPane = restoreSessionOrNull();
-        if (initialPane == null) {
-            initialPane = paneManager.init(START_URL);
-        }
-        setActivePane(initialPane);
+        loadInitialSessions();
     }
 
-    private WebView restoreSessionOrNull() {
-        String sessionJson = sessionStore.load();
-        if (sessionJson == null || sessionJson.isEmpty()) return null;
-        try {
-            JSONObject tree = new JSONObject(sessionJson);
-            return paneManager.restore(tree);
-        } catch (JSONException e) {
-            Log.e(TAG, "Session restore failed, starting fresh", e);
-            return null;
+    // =========================================================
+    // Multi-Account Sessions
+    // =========================================================
+
+    /** Loads persisted sessions (or creates the default one on first run) and mounts whichever was active. */
+    private void loadInitialSessions() {
+        SessionStore.State state = sessionStore.load();
+        sessions.clear();
+        sessions.addAll(state.sessions);
+        if (sessions.isEmpty()) {
+            SessionStore.Session initial = new SessionStore.Session(newSessionId(), "Main Session", null);
+            sessions.add(initial);
+            state.activeId = initial.id;
         }
+        activeSessionId = (state.activeId != null && findSession(state.activeId) != null)
+                ? state.activeId : sessions.get(0).id;
+        mountSession(activeSessionId);
+        persistSession();
+    }
+
+    private String newSessionId() {
+        return "session_" + System.currentTimeMillis() + "_" + (sessionIdCounter++);
+    }
+
+    private SessionStore.Session findSession(String id) {
+        if (id == null) return null;
+        for (SessionStore.Session s : sessions) {
+            if (s.id.equals(id)) return s;
+        }
+        return null;
+    }
+
+    private int indexOfSession(String id) {
+        for (int i = 0; i < sessions.size(); i++) {
+            if (sessions.get(i).id.equals(id)) return i;
+        }
+        return -1;
+    }
+
+    /** Tears down whatever pane tree is currently mounted and mounts `id`'s tree in its place (or a fresh single pane if it has none saved yet). */
+    private void mountSession(String id) {
+        SessionStore.Session session = findSession(id);
+        if (session == null) return;
+
+        activeSessionId = id;
+        allPaneWebViews.clear();
+        zoomLevels.clear();
+        activePaneWebView = null;
+        if (paneManager != null) paneManager.destroyAll();
+
+        WebView initial = session.tree != null ? paneManager.restore(session.tree) : null;
+        if (initial == null) initial = paneManager.init(START_URL);
+        setActivePane(initial);
+        pushSessionsToToolbar();
+    }
+
+    /** JSON snapshot of {sessions:[{id,name}...], activeId} for bar.js to render the account switcher from. */
+    public String listSessionsJson() {
+        try {
+            JSONObject o = new JSONObject();
+            JSONArray arr = new JSONArray();
+            for (SessionStore.Session s : sessions) {
+                JSONObject so = new JSONObject();
+                so.put("id", s.id);
+                so.put("name", s.name);
+                arr.put(so);
+            }
+            o.put("sessions", arr);
+            o.put("activeId", activeSessionId);
+            return o.toString();
+        } catch (JSONException e) {
+            return "{\"sessions\":[],\"activeId\":null}";
+        }
+    }
+
+    private void pushSessionsToToolbar() {
+        if (barWebView == null) return;
+        barWebView.evaluateJavascript(
+            "javascript:window.onSessionsUpdated && window.onSessionsUpdated(" + listSessionsJson() + ")", null);
+    }
+
+    public void addSessionNative(String name) {
+        persistSession(); // capture the outgoing session's tree before switching away from it
+        String trimmed = (name == null || name.trim().isEmpty()) ? "Session" : name.trim();
+        SessionStore.Session newSession = new SessionStore.Session(newSessionId(), trimmed, null);
+        sessions.add(newSession);
+        mountSession(newSession.id);
+        persistSession();
+    }
+
+    public void switchSessionNative(String id) {
+        if (id == null || id.equals(activeSessionId) || findSession(id) == null) return;
+        persistSession();
+        mountSession(id);
+        persistSession();
+    }
+
+    public void closeSessionNative(String id) {
+        if (id == null || sessions.size() <= 1) return; // always keep at least one session open
+        int idx = indexOfSession(id);
+        if (idx < 0) return;
+
+        boolean wasActive = id.equals(activeSessionId);
+        sessions.remove(idx);
+
+        if (wasActive) {
+            SessionStore.Session next = sessions.get(Math.min(idx, sessions.size() - 1));
+            mountSession(next.id);
+        } else {
+            pushSessionsToToolbar();
+        }
+        persistSession();
     }
 
     // =========================================================
@@ -120,6 +225,7 @@ public class MainActivity extends Activity {
                 super.onPageFinished(view, url);
                 // Push initial download list to toolbar
                 if (downloadBridge != null) downloadBridge.broadcastAll();
+                pushSessionsToToolbar();
             }
         });
 
@@ -435,8 +541,14 @@ public class MainActivity extends Activity {
     // =========================================================
     private void persistSession() {
         try {
-            JSONObject tree = paneManager.serialize();
-            if (tree != null) sessionStore.save(tree.toString());
+            SessionStore.Session active = findSession(activeSessionId);
+            if (active != null && paneManager != null) {
+                active.tree = paneManager.serialize();
+            }
+            SessionStore.State state = new SessionStore.State();
+            state.sessions.addAll(sessions);
+            state.activeId = activeSessionId;
+            sessionStore.save(state);
         } catch (Exception e) {
             Log.e(TAG, "Session save failed", e);
         }
