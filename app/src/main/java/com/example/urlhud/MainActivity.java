@@ -2,33 +2,31 @@ package com.example.urlhud;
 
 import android.app.Activity;
 import android.app.DownloadManager;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
-import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 
 /**
@@ -38,10 +36,19 @@ import java.util.Scanner;
  * - PasswordBridge (password manager autofill + save)
  * - Firebase RTDB sync (bookmarks, passwords, tabs)
  * - Trinity sync clipboard monitor
+ *
+ * Pane creation/layout is entirely owned by PaneManager (see its class doc);
+ * this class only supplies the WebViewFactory/ZoomListener/ZoomIO callbacks
+ * PaneManager needs, and tracks which pane is currently "active" (focused)
+ * since PaneManager itself has no concept of focus.
  */
 public class MainActivity extends Activity {
 
     private static final String TAG = "MainActivity";
+    private static final String START_URL = "https://example.com";
+    private static final float ZOOM_MIN = 0.5f;
+    private static final float ZOOM_MAX = 2.0f;
+    private static final float ZOOM_STEP = 0.1f;
 
     // UI
     public WebView barWebView;
@@ -49,8 +56,10 @@ public class MainActivity extends Activity {
 
     // Pane management
     private PaneManager paneManager;
+    private SessionStore sessionStore;
     private WebView activePaneWebView;
     private final List<WebView> allPaneWebViews = new ArrayList<>();
+    private final Map<WebView, Float> zoomLevels = new HashMap<>();
 
     // Bridges
     private DownloadManagerBridge downloadBridge;
@@ -66,17 +75,29 @@ public class MainActivity extends Activity {
 
         rootContainer = findViewById(R.id.root_container);
         barWebView = findViewById(R.id.bar_webview);
+        sessionStore = new SessionStore(this);
 
         setupBarWebView();
         setupPaneManager();
         setupDownloads();
 
         // Restore or create initial pane
-        String session = SessionStore.load(this);
-        if (session != null && !session.isEmpty()) {
-            paneManager.restoreSession(session);
-        } else {
-            paneManager.addPane("https://example.com");
+        WebView initialPane = restoreSessionOrNull();
+        if (initialPane == null) {
+            initialPane = paneManager.init(START_URL);
+        }
+        setActivePane(initialPane);
+    }
+
+    private WebView restoreSessionOrNull() {
+        String sessionJson = sessionStore.load();
+        if (sessionJson == null || sessionJson.isEmpty()) return null;
+        try {
+            JSONObject tree = new JSONObject(sessionJson);
+            return paneManager.restore(tree);
+        } catch (JSONException e) {
+            Log.e(TAG, "Session restore failed, starting fresh", e);
+            return null;
         }
     }
 
@@ -93,7 +114,7 @@ public class MainActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
 
         barWebView.setWebChromeClient(new WebChromeClient());
-        barWebView.setWebViewClient(new WebViewClient() {
+        barWebView.setWebViewClient(new android.webkit.WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
@@ -116,11 +137,41 @@ public class MainActivity extends Activity {
     // Pane Manager Setup
     // =========================================================
     private void setupPaneManager() {
-        paneManager = new PaneManager(rootContainer, this::onPaneCreated, this::onActivePaneChanged);
+        paneManager = new PaneManager(this, rootContainer, this::createPaneWebView, paneZoomListener, paneZoomIO);
     }
 
-    private void onPaneCreated(WebView webView) {
+    private final PaneManager.ZoomListener paneZoomListener = new PaneManager.ZoomListener() {
+        @Override
+        public void onZoomIn(WebView pane) {
+            adjustZoom(pane, ZOOM_STEP);
+        }
+
+        @Override
+        public void onZoomOut(WebView pane) {
+            adjustZoom(pane, -ZOOM_STEP);
+        }
+    };
+
+    private final PaneManager.ZoomIO paneZoomIO = new PaneManager.ZoomIO() {
+        @Override
+        public float getZoom(WebView pane) {
+            Float z = zoomLevels.get(pane);
+            return z != null ? z : 1f;
+        }
+
+        @Override
+        public void setInitialZoom(WebView pane, float zoom) {
+            zoomLevels.put(pane, zoom);
+            applyZoomVisual(pane, zoom);
+        }
+    };
+
+    /** WebViewFactory callback: PaneManager calls this whenever it needs a brand new pane. */
+    private WebView createPaneWebView(String url) {
+        WebView webView = new WebView(this);
         allPaneWebViews.add(webView);
+        zoomLevels.put(webView, 1f);
+        webView.setTag(url);
 
         WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);
@@ -134,21 +185,19 @@ public class MainActivity extends Activity {
         // 1:1 extension header bypass
         webView.setWebViewClient(new HeaderBypassWebViewClient() {
             @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
+            public void onPageFinished(WebView view, String pageUrl) {
+                super.onPageFinished(view, pageUrl);
+                view.setTag(pageUrl); // PaneManager.serialize() reads the last URL off the tag
                 injectTrinitySyncScript(view);
                 injectPasswordCaptureScript(view);
+                applyZoomVisual(view, paneZoomIO.getZoom(view));
 
-                // Update toolbar
-                barWebView.evaluateJavascript(
-                    "javascript:updateAddress('" + escapeJs(url) + "')", null);
-                barWebView.evaluateJavascript(
-                    "javascript:setNavState(" + view.canGoBack() + "," + view.canGoForward() + ")", null);
-
-                // Update split button state
-                boolean canClose = paneManager.getPaneCount() > 1;
-                barWebView.evaluateJavascript(
-                    "javascript:setSplitState(" + canClose + ")", null);
+                // Only the focused pane should drive the toolbar - a background
+                // pane finishing a load shouldn't hijack the address bar.
+                if (view == activePaneWebView) {
+                    updateToolbarForActivePane(view);
+                }
+                persistSession();
             }
 
             @Override
@@ -166,19 +215,19 @@ public class MainActivity extends Activity {
 
         webView.setDownloadListener(new DownloadListener() {
             @Override
-            public void onDownloadStart(String url, String userAgent, String contentDisposition,
+            public void onDownloadStart(String downloadUrl, String userAgent, String contentDisposition,
                                           String mimetype, long contentLength) {
-                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(downloadUrl));
                 request.setMimeType(mimetype);
-                String cookies = CookieManager.getInstance().getCookie(url);
+                String cookies = CookieManager.getInstance().getCookie(downloadUrl);
                 request.addRequestHeader("cookie", cookies);
                 request.addRequestHeader("User-Agent", userAgent);
                 request.setDescription("Downloading file...");
-                request.setTitle(URLUtil.guessFileName(url, contentDisposition, mimetype));
+                request.setTitle(URLUtil.guessFileName(downloadUrl, contentDisposition, mimetype));
                 request.allowScanningByMediaScanner();
                 request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
                 request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
-                    URLUtil.guessFileName(url, contentDisposition, mimetype));
+                    URLUtil.guessFileName(downloadUrl, contentDisposition, mimetype));
 
                 DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
                 if (dm != null) dm.enqueue(request);
@@ -193,16 +242,36 @@ public class MainActivity extends Activity {
         // Clipboard bridge for specific domains (original feature preserved)
         clipboardBridge = new ClipboardBridge(this);
         webView.addJavascriptInterface(clipboardBridge, "ClipboardBridge");
+
+        // PaneManager has no built-in focus tracking (unlike the extension's
+        // per-pane focusCatcher overlay), so mark this pane active on first
+        // touch. Returning false lets the WebView still handle the touch
+        // normally (scrolling, tapping links, etc.).
+        webView.setOnTouchListener((v, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN && v != activePaneWebView) {
+                setActivePane((WebView) v);
+            }
+            return false;
+        });
+
+        webView.loadUrl(url);
+        return webView;
     }
 
-    private void onActivePaneChanged(WebView webView) {
+    /** Marks `webView` as the focused pane and refreshes the toolbar to match it. */
+    private void setActivePane(WebView webView) {
         activePaneWebView = webView;
-        if (webView != null) {
-            barWebView.evaluateJavascript(
-                "javascript:updateAddress('" + escapeJs(webView.getUrl()) + "')", null);
-            barWebView.evaluateJavascript(
-                "javascript:setNavState(" + webView.canGoBack() + "," + webView.canGoForward() + ")", null);
-        }
+        if (paneManager != null) paneManager.setActivePane(webView);
+        if (webView != null) updateToolbarForActivePane(webView);
+    }
+
+    private void updateToolbarForActivePane(WebView webView) {
+        barWebView.evaluateJavascript(
+            "javascript:updateAddress('" + escapeJs(webView.getUrl()) + "')", null);
+        barWebView.evaluateJavascript(
+            "javascript:setNavState(" + webView.canGoBack() + "," + webView.canGoForward() + ")", null);
+        barWebView.evaluateJavascript(
+            "javascript:setSplitState(" + paneManager.hasSplit() + ")", null);
     }
 
     // =========================================================
@@ -250,76 +319,85 @@ public class MainActivity extends Activity {
     }
 
     public void loadUrlInActivePane(String url) {
-        runOnUiThread(() -> {
-            if (activePaneWebView != null) {
-                activePaneWebView.loadUrl(url);
-            }
-        });
+        if (activePaneWebView == null) return;
+        activePaneWebView.loadUrl(url);
+        activePaneWebView.setTag(url);
+        persistSession();
     }
 
     public void goBackActivePane() {
-        runOnUiThread(() -> {
-            if (activePaneWebView != null && activePaneWebView.canGoBack()) {
-                activePaneWebView.goBack();
-            }
-        });
+        if (activePaneWebView != null && activePaneWebView.canGoBack()) {
+            activePaneWebView.goBack();
+            persistSession();
+        }
     }
 
     public void goForwardActivePane() {
-        runOnUiThread(() -> {
-            if (activePaneWebView != null && activePaneWebView.canGoForward()) {
-                activePaneWebView.goForward();
-            }
-        });
+        if (activePaneWebView != null && activePaneWebView.canGoForward()) {
+            activePaneWebView.goForward();
+            persistSession();
+        }
     }
 
     public void zoomActivePane(float delta) {
-        runOnUiThread(() -> {
-            if (activePaneWebView != null) {
-                float current = activePaneWebView.getScale();
-                float next = Math.max(0.5f, Math.min(2.0f, current + delta));
-                activePaneWebView.setInitialScale((int) (next * 100));
-                // Also inject CSS zoom for consistency
-                activePaneWebView.evaluateJavascript(
-                    "javascript:document.body.style.zoom='" + next + "'", null);
-            }
-        });
+        if (activePaneWebView != null) {
+            adjustZoom(activePaneWebView, delta);
+        }
+    }
+
+    private void adjustZoom(WebView pane, float delta) {
+        if (pane == null) return;
+        Float current = zoomLevels.get(pane);
+        float next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, (current != null ? current : 1f) + delta));
+        next = Math.round(next * 100) / 100f;
+        zoomLevels.put(pane, next);
+        applyZoomVisual(pane, next);
+        persistSession();
+    }
+
+    private void applyZoomVisual(WebView pane, float zoom) {
+        pane.setInitialScale((int) (zoom * 100));
+        // Also inject CSS zoom for consistency
+        pane.evaluateJavascript(
+            "javascript:document.body && (document.body.style.zoom='" + zoom + "')", null);
     }
 
     public void toggleFullscreenNative() {
-        runOnUiThread(() -> {
-            if (!isFullscreen) {
-                getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-                getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-                barWebView.setVisibility(View.GONE);
-                isFullscreen = true;
-            } else {
-                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-                getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-                barWebView.setVisibility(View.VISIBLE);
-                isFullscreen = false;
-            }
-            barWebView.evaluateJavascript(
-                "javascript:setSplitState(" + (paneManager.getPaneCount() > 1) + ")", null);
-        });
+        if (!isFullscreen) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+            barWebView.setVisibility(View.GONE);
+            isFullscreen = true;
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+            barWebView.setVisibility(View.VISIBLE);
+            isFullscreen = false;
+        }
+        barWebView.evaluateJavascript(
+            "javascript:setSplitState(" + paneManager.hasSplit() + ")", null);
     }
 
     public void splitActivePane(String direction) {
-        runOnUiThread(() -> {
-            if (activePaneWebView != null) {
-                String currentUrl = activePaneWebView.getUrl();
-                paneManager.splitPane(activePaneWebView, direction, currentUrl);
-            }
-        });
+        if (activePaneWebView == null) return;
+        WebView newPane = paneManager.splitPane(activePaneWebView, direction);
+        if (newPane != null) {
+            setActivePane(newPane);
+            persistSession();
+        }
     }
 
     public void closeActivePaneNative() {
-        runOnUiThread(() -> {
-            if (activePaneWebView != null) {
-                paneManager.removePane(activePaneWebView);
-            }
-        });
+        WebView closing = activePaneWebView;
+        if (closing == null) return;
+        WebView next = paneManager.closePane(closing);
+        // closePane() already destroys `closing`'s WebView once it's detached;
+        // just drop our own bookkeeping for it.
+        allPaneWebViews.remove(closing);
+        zoomLevels.remove(closing);
+        setActivePane(next); // null if that was the last pane (closePane() refuses to close it)
+        persistSession();
     }
 
     // =========================================================
@@ -355,15 +433,19 @@ public class MainActivity extends Activity {
     // =========================================================
     // Session Persistence
     // =========================================================
-    @Override
-    protected void onPause() {
-        super.onPause();
+    private void persistSession() {
         try {
-            String session = paneManager.serializeSession();
-            SessionStore.save(this, session);
+            JSONObject tree = paneManager.serialize();
+            if (tree != null) sessionStore.save(tree.toString());
         } catch (Exception e) {
             Log.e(TAG, "Session save failed", e);
         }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        persistSession();
     }
 
     // =========================================================
