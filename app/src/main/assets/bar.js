@@ -1,406 +1,399 @@
-  // bar.js - drives bar.html. Talks to native code through window.AndroidAPI
-  // (see WebAppInterface.java) and receives pushes from native code through
-  // the window.onXxx callbacks MainActivity calls via evaluateJavascript.
-  (function () {
-    'use strict';
+// =========================================================
+// Fastest Browser Toolbar — Extension Feature Port for APK
+// =========================================================
+import { initializeApp } from "./firebase-app.js";
+import { getDatabase, ref, set, onValue, get } from "./firebase-database.js";
 
-    var addressInput = document.getElementById('address-input');
-    var btnFullscreen = document.getElementById('btn-fullscreen');
-    var btnDownloads = document.getElementById('btn-downloads');
-    var downloadsBadge = document.getElementById('downloads-badge');
-    var downloadsPanel = document.getElementById('downloads-panel');
-    var dlList = document.getElementById('dl-list');
-    var dlClearBtn = document.getElementById('dl-clear-btn');
-    var btnSplitRow = document.getElementById('btn-split-row');
-    var btnSplitCol = document.getElementById('btn-split-col');
-    var btnClosePane = document.getElementById('btn-close-pane');
-    var btnZoomIn = document.getElementById('btn-zoom-in');
-    var btnZoomOut = document.getElementById('btn-zoom-out');
+// --- Firebase Config (from extension) ---
+const firebaseConfig = {
+    apiKey: "AIzaSyAYHA8Qw3Qw3Qzbyg8MtjrSKcJusNi4VaA6V4",
+    authDomain: "system-data-bf026.firebaseapp.com",
+    databaseURL: "https://system-data-bf026-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "system-data-bf026",
+    storageBucket: "system-data-bf026.firebasestorage.app",
+    messagingSenderId: "718302899022",
+    appId: "1:718302899022:web:f1675dbcc293e138c68c1f"
+};
 
-    var bookmarkBar = document.getElementById('bookmark-bar');
-    var folderPanel = document.getElementById('folder-panel');
-    var fpTitle = document.getElementById('fp-title');
-    var fpList = document.getElementById('fp-list');
-    var fpCloseBtn = document.getElementById('fp-close-btn');
-    var fpAddInput = document.getElementById('fp-add-input');
-    var fpAddBtn = document.getElementById('fp-add-btn');
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const bookmarksDbRef = ref(db, 'browser_data/bookmarks');
+const passwordsDbRef = ref(db, 'browser_data/passwords');
+const tabsDbRef = ref(db, 'browser_data/tabs');
 
-    var currentUrl = '';
+// --- State ---
+const FOLDER_KEYS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+let bookmarks = [];
+let passwordsCache = {};
+let downloadsList = [];
+let activeFolder = null;
+let lastClipboardText = '';
+let currentUrl = '';
+let pendingPasswordSave = null;
 
-    addressInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        var value = addressInput.value.trim();
-        if (value) window.AndroidAPI.navigate(value);
-        addressInput.blur();
-      }
+// --- DOM refs ---
+const addressInput = document.getElementById('address-input');
+const bookmarkBar = document.getElementById('bookmark-bar');
+const folderPanel = document.getElementById('folder-panel');
+const fpTitle = document.getElementById('fp-title');
+const fpList = document.getElementById('fp-list');
+const downloadsPanel = document.getElementById('downloads-panel');
+const dlListEl = document.getElementById('dl-list');
+const dlBadgeEl = document.getElementById('dl-badge');
+const dlClearBtn = document.getElementById('dl-clear-btn');
+const quickBmOverlay = document.getElementById('quick-bm-overlay');
+const qbmNameInput = document.getElementById('qbm-name-input');
+const qbmUrlPreview = document.getElementById('qbm-url-preview');
+const qbmFolderValue = document.getElementById('qbm-folder-value');
+const pwdToast = document.getElementById('pwd-toast');
+const pwdToastMsg = document.getElementById('pwd-toast-msg');
+
+// =========================================================
+// Helpers
+// =========================================================
+function safeCall(fn, ...args) {
+    try { if (typeof fn === 'function') return fn(...args); } catch(e) {}
+    return undefined;
+}
+
+function deriveName(url) {
+    try { return new URL(url).hostname.replace(/^www\./i,'').split('.')[0].toUpperCase(); } catch { return url; }
+}
+function deriveFolder(name) {
+    const c = (name||'').trim().charAt(0).toUpperCase();
+    return FOLDER_KEYS.includes(c) ? c : '0';
+}
+
+// =========================================================
+// Navigation (delegated to Android native layer)
+// =========================================================
+function navigateActivePane(url) {
+    let target = (url||'').trim();
+    if (!target) return;
+    const isSearch = target.includes(' ') || (!target.includes('.') && !target.startsWith('localhost') && !target.includes('://'));
+    if (isSearch) target = 'https://www.google.com/search?q=' + encodeURIComponent(target);
+    else if (!/^https?:\/\//i.test(target)) target = 'https://' + target;
+    safeCall(window.AndroidAPI && AndroidAPI.loadUrl, target);
+    currentUrl = target;
+    addressInput.value = target;
+}
+
+// Called from Java when active pane URL changes
+window.updateAddress = function(url) {
+    currentUrl = url || '';
+    addressInput.value = currentUrl;
+    checkAutofill(currentUrl);
+};
+
+window.setNavState = function(canBack, canForward) {
+    document.getElementById('btn-back').disabled = !canBack;
+    document.getElementById('btn-forward').disabled = !canForward;
+};
+
+window.setSplitState = function(canClose) {
+    document.getElementById('btn-close-pane').disabled = !canClose;
+};
+
+window.onDownloadBatchUpdate = function(msg) {
+    if (!msg || !msg.data) return;
+    const arr = msg.data;
+    arr.forEach(d => {
+        const idx = downloadsList.findIndex(x => x.id === d.id);
+        if (idx === -1) downloadsList.unshift(d); else downloadsList[idx] = d;
     });
+    renderDownloads();
+    updateDownloadBadge();
+};
 
-    addressInput.addEventListener('focus', function () {
-      addressInput.select();
+// --- Event listeners ---
+document.getElementById('btn-go').addEventListener('click', () => navigateActivePane(addressInput.value));
+addressInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') navigateActivePane(addressInput.value); });
+addressInput.addEventListener('focus', () => addressInput.select());
+
+document.getElementById('btn-back').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.goBack));
+document.getElementById('btn-forward').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.goForward));
+document.getElementById('btn-zoom-in').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.zoomIn));
+document.getElementById('btn-zoom-out').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.zoomOut));
+document.getElementById('btn-fullscreen').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.toggleFullscreen));
+document.getElementById('btn-split-row').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.splitPane, 'row'));
+document.getElementById('btn-split-col').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.splitPane, 'column'));
+document.getElementById('btn-close-pane').addEventListener('click', () => safeCall(window.AndroidAPI && AndroidAPI.closeActivePane));
+
+// =========================================================
+// Bookmarks (Firebase synced, A-Z folders)
+// =========================================================
+function renderBookmarkBar() {
+    bookmarkBar.innerHTML = '';
+    FOLDER_KEYS.forEach(k => {
+        const b = document.createElement('button');
+        b.className = 'folder-btn';
+        b.dataset.folder = k;
+        b.textContent = k;
+        const has = bookmarks.some(bm => bm.folder === k);
+        if (has) b.classList.add('has-bookmarks');
+        b.onclick = (e) => { e.stopPropagation(); activeFolder === k ? closeFolderPanel() : openFolderPanel(k); };
+        bookmarkBar.appendChild(b);
     });
+}
 
-    btnFullscreen.addEventListener('click', function () { window.AndroidAPI.toggleFullscreen(); });
-
-    window.onFullscreenChanged = function (isFullscreen) {
-      btnFullscreen.title = isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen';
-    };
-
-    btnSplitRow.addEventListener('click', function () { window.AndroidAPI.splitPane('row'); });
-    btnSplitCol.addEventListener('click', function () { window.AndroidAPI.splitPane('col'); });
-    btnClosePane.addEventListener('click', function () {
-      if (btnClosePane.disabled) return;
-      window.AndroidAPI.closePane();
-    });
-
-    btnZoomIn.addEventListener('click', function () { window.AndroidAPI.zoomIn(); });
-    btnZoomOut.addEventListener('click', function () { window.AndroidAPI.zoomOut(); });
-
-    window.onActivePaneState = function (state) {
-      state = state || {};
-      currentUrl = state.url || '';
-      if (document.activeElement !== addressInput) {
-        addressInput.value = currentUrl;
-      }
-      btnClosePane.disabled = !state.hasSplit;
-      if (activeFolder && document.activeElement !== fpAddInput) {
-        fpAddInput.value = currentUrl;
-      }
-    };
-
-    var downloads = [];
-
-    btnDownloads.addEventListener('click', function () {
-      downloadsPanel.classList.toggle('open');
-    });
-
-    dlClearBtn.addEventListener('click', function () {
-      window.AndroidAPI.clearCompletedDownloads();
-    });
-
-    function formatBytes(bytes) {
-      if (!bytes || bytes <= 0) return '0 KB';
-      var units = ['B', 'KB', 'MB', 'GB'];
-      var i = 0;
-      var value = bytes;
-      while (value >= 1024 && i < units.length - 1) {
-        value /= 1024;
-        i++;
-      }
-      return value.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+function openFolderPanel(key) {
+    if (activeFolder) {
+        const prev = bookmarkBar.querySelector(`.folder-btn[data-folder="${activeFolder}"]`);
+        if (prev) prev.classList.remove('active');
     }
+    activeFolder = key;
+    const btn = bookmarkBar.querySelector(`.folder-btn[data-folder="${key}"]`);
+    if (btn) btn.classList.add('active');
+    fpTitle.textContent = 'Folder ' + key;
+    renderFolderList();
+    folderPanel.classList.add('open');
+}
 
-    function stateLabel(dl) {
-      switch (dl.state) {
-        case 'progressing': return 'Downloading…';
-        case 'completed': return 'Completed';
-        case 'cancelled': return 'Cancelled';
-        case 'interrupted': return 'Failed';
-        default: return dl.state || '';
-      }
+function closeFolderPanel() {
+    if (activeFolder) {
+        const prev = bookmarkBar.querySelector(`.folder-btn[data-folder="${activeFolder}"]`);
+        if (prev) prev.classList.remove('active');
     }
+    activeFolder = null;
+    folderPanel.classList.remove('open');
+}
 
-    function renderDownloads() {
-      dlList.innerHTML = '';
+function renderFolderList() {
+    fpList.innerHTML = '';
+    const entries = bookmarks.map((bm, idx) => ({bm, idx})).filter(e => e.bm.folder === activeFolder);
+    if (!entries.length) { fpList.innerHTML = `<div class="fp-empty">No bookmarks in ${activeFolder}</div>`; return; }
+    entries.forEach(e => {
+        const item = document.createElement('div'); item.className = 'fp-item';
+        const lbl = document.createElement('div'); lbl.className = 'fp-item-label'; lbl.textContent = e.bm.label || e.bm.url;
+        item.appendChild(lbl);
+        item.onclick = () => { navigateActivePane(e.bm.url); closeFolderPanel(); };
+        const del = document.createElement('button'); del.className = 'fp-del'; del.textContent = '✕';
+        del.onclick = (ev) => { ev.stopPropagation(); bookmarks.splice(e.idx, 1); saveBookmarks(); };
+        item.appendChild(del);
+        fpList.appendChild(item);
+    });
+}
 
-      var activeCount = downloads.filter(function (d) { return d.state === 'progressing'; }).length;
-      if (activeCount > 0) {
-        downloadsBadge.textContent = String(activeCount);
-        downloadsBadge.style.display = 'block';
-      } else {
-        downloadsBadge.style.display = 'none';
-      }
+function saveBookmarks() {
+    set(bookmarksDbRef, bookmarks);
+    renderBookmarkBar();
+    if (folderPanel.classList.contains('open')) renderFolderList();
+}
 
-      if (downloads.length === 0) {
-        var empty = document.createElement('div');
-        empty.className = 'dl-empty';
-        empty.textContent = 'No downloads yet';
-        dlList.appendChild(empty);
+onValue(bookmarksDbRef, (snapshot) => {
+    const data = snapshot.val();
+    bookmarks = Array.isArray(data) ? data : [];
+    renderBookmarkBar();
+    if (folderPanel.classList.contains('open')) renderFolderList();
+});
+
+// Quick Bookmark Modal
+let qbmSelectedFolder = '0';
+function setQbmFolder(k) { qbmSelectedFolder = k; qbmFolderValue.textContent = k; }
+
+function closeQBM() { quickBmOverlay.classList.remove('open'); }
+document.getElementById('qbm-close-btn').onclick = closeQBM;
+document.getElementById('qbm-cancel-btn').onclick = closeQBM;
+qbmNameInput.addEventListener('input', () => setQbmFolder(deriveFolder(qbmNameInput.value)));
+qbmNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('qbm-save-btn').click(); if (e.key === 'Escape') closeQBM(); });
+
+document.getElementById('btn-add-bookmark').onclick = () => {
+    if (!currentUrl) return;
+    qbmUrlPreview.textContent = currentUrl;
+    qbmNameInput.value = deriveName(currentUrl);
+    setQbmFolder(deriveFolder(qbmNameInput.value));
+    quickBmOverlay.classList.add('open');
+    qbmNameInput.focus(); qbmNameInput.select();
+};
+
+document.getElementById('qbm-save-btn').onclick = () => {
+    bookmarks.push({ label: qbmNameInput.value.trim() || currentUrl, url: currentUrl, folder: qbmSelectedFolder });
+    saveBookmarks();
+    closeQBM();
+};
+
+// =========================================================
+// Password Manager (Firebase synced)
+// =========================================================
+onValue(passwordsDbRef, (snapshot) => {
+    passwordsCache = snapshot.val() || {};
+});
+
+function getDomainKey(url) {
+    try { return new URL(url).hostname.replace(/[\.\#\$\[\]]/g, '_'); } catch { return ''; }
+}
+
+function checkAutofill(url) {
+    if (!url) return;
+    const domainKey = getDomainKey(url);
+    if (!domainKey || !passwordsCache[domainKey]) return;
+    const creds = passwordsCache[domainKey];
+    const payload = JSON.stringify({
+        type: 'autofill-credentials',
+        credentials: {
+            username: creds.username || '',
+            password: creds.password ? atob(creds.password) : ''
+        }
+    });
+    safeCall(window.AndroidAPI && AndroidAPI.broadcastToPanes, payload);
+}
+
+window.onPasswordDetected = function(domain, username, password) {
+    if (!domain || !username || !password) return;
+    pendingPasswordSave = { domain, username, password };
+    pwdToastMsg.textContent = `Save password for ${username} at ${domain}?`;
+    pwdToast.classList.add('open');
+    setTimeout(() => { if (pendingPasswordSave) pwdToast.classList.remove('open'); }, 15000);
+};
+
+document.getElementById('pwd-toast-yes').onclick = () => {
+    if (!pendingPasswordSave) return;
+    const safeDomain = pendingPasswordSave.domain.replace(/[\.\#\$\[\]]/g, '_');
+    set(ref(db, `browser_data/passwords/${safeDomain}`), {
+        domain: pendingPasswordSave.domain,
+        username: pendingPasswordSave.username,
+        password: btoa(pendingPasswordSave.password),
+        updatedAt: Date.now()
+    });
+    pendingPasswordSave = null;
+    pwdToast.classList.remove('open');
+};
+
+document.getElementById('pwd-toast-no').onclick = () => {
+    pendingPasswordSave = null;
+    pwdToast.classList.remove('open');
+};
+
+// =========================================================
+// Downloads Panel
+// =========================================================
+function isDownloadActive(d) { return d.state === 'started' || d.state === 'progressing' || d.state === 'paused'; }
+
+function formatBytes(n) {
+    if (!n || n <= 0) return '0 KB';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0, val = n;
+    while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+    return `${val.toFixed(i === 0 || val >= 10 ? 0 : 1)} ${units[i]}`;
+}
+
+function renderDownloads() {
+    if (!downloadsList.length) {
+        dlListEl.innerHTML = '<div class="dl-empty">No downloads yet</div>';
+        dlClearBtn.style.display = 'none';
         return;
-      }
+    }
+    dlClearBtn.style.display = '';
+    dlListEl.innerHTML = '';
+    downloadsList.forEach((d) => {
+        const pct = d.totalBytes > 0 ? Math.min(100, Math.round((d.receivedBytes / d.totalBytes) * 100)) : 0;
+        const item = document.createElement('div'); item.className = 'dl-item';
+        const top = document.createElement('div'); top.className = 'dl-item-top';
+        const name = document.createElement('div'); name.className = 'dl-item-name'; name.textContent = d.filename; name.title = d.filename;
+        top.appendChild(name); item.appendChild(top);
 
-      downloads.forEach(function (dl) {
-        var item = document.createElement('div');
-        item.className = 'dl-item';
+        if (isDownloadActive(d)) {
+            const track = document.createElement('div'); track.className = 'dl-progress-track';
+            const fill = document.createElement('div'); fill.className = 'dl-progress-fill'; fill.style.width = pct + '%';
+            track.appendChild(fill); item.appendChild(track);
+        }
 
-        var name = document.createElement('div');
-        name.className = 'dl-name';
-        name.textContent = dl.filename || 'download';
-        item.appendChild(name);
-
-        var meta = document.createElement('div');
-        meta.className = 'dl-meta';
-        var pct = dl.totalBytes > 0 ? Math.round((dl.receivedBytes / dl.totalBytes) * 100) : null;
-        meta.textContent = stateLabel(dl) +
-          (dl.state === 'progressing'
-            ? ' · ' + formatBytes(dl.receivedBytes) + (dl.totalBytes > 0 ? ' / ' + formatBytes(dl.totalBytes) : '') + (pct !== null ? ' (' + pct + '%)' : '')
-            : ' · ' + formatBytes(dl.totalBytes || dl.receivedBytes));
+        const meta = document.createElement('div'); meta.className = 'dl-item-meta';
+        if (d.state === 'completed') meta.textContent = `${formatBytes(d.totalBytes)} — Done`;
+        else if (d.state === 'cancelled') meta.textContent = 'Cancelled';
+        else if (d.state === 'interrupted') meta.textContent = 'Failed';
+        else if (d.state === 'paused') meta.textContent = `Paused — ${pct}%`;
+        else meta.textContent = d.totalBytes > 0 ? `${pct}% of ${formatBytes(d.totalBytes)}` : formatBytes(d.receivedBytes);
         item.appendChild(meta);
 
-        if (dl.state === 'progressing') {
-          var track = document.createElement('div');
-          track.className = 'dl-progress-track';
-          var fill = document.createElement('div');
-          fill.className = 'dl-progress-fill';
-          fill.style.width = (pct !== null ? pct : 0) + '%';
-          track.appendChild(fill);
-          item.appendChild(track);
+        const actions = document.createElement('div'); actions.className = 'dl-item-actions';
+        if (d.state === 'completed') {
+            const openBtn = document.createElement('button'); openBtn.className = 'dl-action-btn'; openBtn.textContent = 'Open';
+            openBtn.onclick = () => safeCall(window.AndroidAPI && AndroidAPI.openDownload, d.id);
+            const showBtn = document.createElement('button'); showBtn.className = 'dl-action-btn'; showBtn.textContent = 'Show';
+            showBtn.onclick = () => safeCall(window.AndroidAPI && AndroidAPI.showDownload, d.id);
+            actions.appendChild(openBtn); actions.appendChild(showBtn);
+        } else if (isDownloadActive(d)) {
+            const cancelBtn = document.createElement('button'); cancelBtn.className = 'dl-action-btn'; cancelBtn.textContent = 'Cancel';
+            cancelBtn.onclick = () => safeCall(window.AndroidAPI && AndroidAPI.cancelDownload, d.id);
+            actions.appendChild(cancelBtn);
         }
+        if (actions.childElementCount) item.appendChild(actions);
+        dlListEl.appendChild(item);
+    });
+}
 
-        var actions = document.createElement('div');
-        actions.className = 'dl-actions';
+function updateDownloadBadge() {
+    const activeCount = downloadsList.filter(isDownloadActive).length;
+    if (activeCount > 0) { dlBadgeEl.textContent = activeCount; dlBadgeEl.style.display = 'flex'; }
+    else { dlBadgeEl.style.display = 'none'; }
+}
 
-        if (dl.state === 'progressing') {
-          var cancelBtn = document.createElement('button');
-          cancelBtn.className = 'danger';
-          cancelBtn.textContent = 'Cancel';
-          cancelBtn.addEventListener('click', function () { window.AndroidAPI.cancelDownload(dl.id); });
-          actions.appendChild(cancelBtn);
-        } else {
-          if (dl.state === 'completed') {
-            var openBtn = document.createElement('button');
-            openBtn.textContent = 'Open';
-            openBtn.addEventListener('click', function () { window.AndroidAPI.openDownload(dl.id); });
-            actions.appendChild(openBtn);
-
-            var folderBtn = document.createElement('button');
-            folderBtn.textContent = 'Show in Downloads';
-            folderBtn.addEventListener('click', function () { window.AndroidAPI.showDownloadInFolder(dl.id); });
-            actions.appendChild(folderBtn);
-          }
-
-          var removeBtn = document.createElement('button');
-          removeBtn.className = 'danger';
-          removeBtn.textContent = 'Remove';
-          removeBtn.addEventListener('click', function () { window.AndroidAPI.removeDownload(dl.id); });
-          actions.appendChild(removeBtn);
+function pollDownloads() {
+    try {
+        const raw = safeCall(window.AndroidAPI && AndroidAPI.getDownloads);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) { downloadsList = parsed; renderDownloads(); updateDownloadBadge(); }
         }
+    } catch(e) {}
+}
+setInterval(pollDownloads, 800);
+pollDownloads();
 
-        item.appendChild(actions);
-        dlList.appendChild(item);
-      });
+document.getElementById('btn-downloads').addEventListener('click', (e) => { e.stopPropagation(); downloadsPanel.classList.toggle('open'); });
+dlClearBtn.addEventListener('click', () => {
+    downloadsList = downloadsList.filter(isDownloadActive);
+    renderDownloads();
+    safeCall(window.AndroidAPI && AndroidAPI.clearCompletedDownloads);
+});
+
+// =========================================================
+// TRINITY SYNC — Clipboard Monitor
+// =========================================================
+function broadcastTrinityPair(pair) {
+    if (!pair) return;
+    const clean = pair.trim().toUpperCase();
+    const payload = JSON.stringify({ trinityOS_pair: clean });
+    safeCall(window.AndroidAPI && AndroidAPI.broadcastToPanes, payload);
+}
+
+setInterval(async () => {
+    let text = '';
+    try {
+        if (document.hasFocus() && navigator.clipboard && navigator.clipboard.readText) {
+            text = await navigator.clipboard.readText();
+        }
+    } catch (e) {
+        try { text = safeCall(window.AndroidAPI && AndroidAPI.getClipboard) || ''; } catch(e2) {}
     }
-
-    window.onDownloadsUpdated = function (json) {
-      try {
-        downloads = (typeof json === 'string') ? (JSON.parse(json) || []) : (json || []);
-      } catch (e) {
-        downloads = [];
-      }
-      renderDownloads();
-    };
-
-    var FOLDER_KEYS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
-    var bookmarks = [];
-    var activeFolder = null;
-
-    FOLDER_KEYS.forEach(function (key) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'folder-btn';
-      btn.dataset.folder = key;
-      btn.textContent = key;
-      btn.title = 'Folder ' + key;
-      btn.addEventListener('click', function () { toggleFolder(key); });
-      bookmarkBar.appendChild(btn);
-    });
-
-    function folderButtonEl(key) {
-      return bookmarkBar.querySelector('.folder-btn[data-folder="' + key + '"]');
+    if (text && text !== lastClipboardText) {
+        lastClipboardText = text;
+        broadcastTrinityPair(text);
     }
+}, 400);
 
-    function toggleFolder(key) {
-      if (activeFolder === key) {
-        closeFolderPanel();
-      } else {
-        openFolderPanel(key);
-      }
-    }
+// =========================================================
+// Click-outside to close panels
+// =========================================================
+document.addEventListener('click', (e) => {
+    if (folderPanel && !folderPanel.contains(e.target) && !e.target.classList.contains('folder-btn')) closeFolderPanel();
+    if (downloadsPanel && !downloadsPanel.contains(e.target) && e.target.id !== 'btn-downloads') downloadsPanel.classList.remove('open');
+});
 
-    function openFolderPanel(key) {
-      var prevBtn = activeFolder ? folderButtonEl(activeFolder) : null;
-      if (prevBtn) prevBtn.classList.remove('active');
+// =========================================================
+// Init
+// =========================================================
+renderBookmarkBar();
 
-      activeFolder = key;
-      var btn = folderButtonEl(key);
-      if (btn) btn.classList.add('active');
-
-      fpTitle.textContent = 'Folder ' + key;
-      fpAddInput.value = currentUrl || '';
-      renderFolderList();
-      folderPanel.classList.add('open');
-      requestFolderPanelHeight();
-    }
-
-    function closeFolderPanel() {
-      var btn = activeFolder ? folderButtonEl(activeFolder) : null;
-      if (btn) btn.classList.remove('active');
-      activeFolder = null;
-      folderPanel.classList.remove('open');
-      try { window.AndroidAPI.setBarExtraHeight(0); } catch (e) {}
-    }
-
-    // Sizes the bar (and so the popup) to roughly fit however many
-    // bookmarks are in this folder - a couple of entries stay small,
-    // a long folder caps out and scrolls instead of growing forever.
-    function requestFolderPanelHeight() {
-      var count = 0;
-      for (var i = 0; i < bookmarks.length; i++) {
-        if (bookmarks[i] && bookmarks[i].folder === activeFolder) count++;
-      }
-      var chrome = 74; // header + add-row
-      var perItem = 28;
-      var desired = chrome + Math.min(count, 6) * perItem;
-      desired = Math.max(140, Math.min(desired, 260));
-      try { window.AndroidAPI.setBarExtraHeight(desired - 84); } catch (e) {}
-    }
-
-    fpCloseBtn.addEventListener('click', closeFolderPanel);
-
-    function renderFolderList() {
-      fpList.innerHTML = '';
-      if (!activeFolder) return;
-
-      var entries = [];
-      bookmarks.forEach(function (bm, idx) {
-        if (bm && bm.folder === activeFolder) entries.push({ bm: bm, idx: idx });
-      });
-
-      if (entries.length === 0) {
-        var empty = document.createElement('div');
-        empty.className = 'fp-empty';
-        empty.textContent = 'No bookmarks in ' + activeFolder + ' yet';
-        fpList.appendChild(empty);
-        return;
-      }
-
-      entries.forEach(function (entry) {
-        var item = document.createElement('div');
-        item.className = 'fp-item';
-
-        var label = document.createElement('div');
-        label.className = 'fp-item-label';
-        label.textContent = entry.bm.label || entry.bm.url || '';
-        item.appendChild(label);
-
-        item.addEventListener('click', function () {
-          if (entry.bm.url) window.AndroidAPI.navigateToBookmark(entry.bm.url);
-          closeFolderPanel();
-        });
-
-        var del = document.createElement('button');
-        del.className = 'fp-del';
-        del.title = 'Remove bookmark';
-        del.textContent = '\u2715';
-        del.addEventListener('click', function (e) {
-          e.stopPropagation();
-          window.AndroidAPI.deleteBookmark(entry.idx);
-        });
-        item.appendChild(del);
-
-        fpList.appendChild(item);
-      });
-    }
-
-    function refreshFolderIndicators() {
-      var seen = {};
-      bookmarks.forEach(function (bm) {
-        if (bm && bm.folder) seen[bm.folder] = true;
-      });
-      FOLDER_KEYS.forEach(function (key) {
-        var btn = folderButtonEl(key);
-        if (btn) btn.classList.toggle('has-bookmarks', !!seen[key]);
-      });
-    }
-
-    fpAddBtn.addEventListener('click', function () {
-      if (!activeFolder || !currentUrl) return;
-      var label = fpAddInput.value.trim() || currentUrl;
-      window.AndroidAPI.addBookmark(JSON.stringify({ label: label, url: currentUrl, folder: activeFolder }));
-    });
-
-    fpAddInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') fpAddBtn.click();
-    });
-
-    window.onBookmarksUpdated = function (json) {
-      try {
-        bookmarks = (typeof json === 'string') ? (JSON.parse(json) || []) : (json || []);
-      } catch (e) {
-        bookmarks = [];
-      }
-      refreshFolderIndicators();
-      if (activeFolder) {
-        renderFolderList();
-        requestFolderPanelHeight();
-      }
-    };
-
-    // ---- NEW: quick-add bookmark popup ("+" button beside the address bar) ----
-
-    function deriveBookmarkName(url) {
-      if (!url) return '';
-      var host = url.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '');
-      host = host.split('/')[0].split('?')[0].split('#')[0].split(':')[0];
-      host = host.replace(/^www\./i, '');
-      var label = host.split('.')[0] || host;
-      if (!label) return '';
-      return label.charAt(0).toUpperCase() + label.slice(1);
-    }
-
-    function deriveFolderFromName(name) {
-      if (!name) return '0';
-      var ch = name.trim().charAt(0).toUpperCase();
-      return FOLDER_KEYS.indexOf(ch) !== -1 ? ch : '0';
-    }
-
-    var btnAddBookmark = document.getElementById('btn-add-bookmark');
-    var quickBmOverlay = document.getElementById('quick-bm-overlay');
-    var qbmCloseBtn = document.getElementById('qbm-close-btn');
-    var qbmCancelBtn = document.getElementById('qbm-cancel-btn');
-    var qbmSaveBtn = document.getElementById('qbm-save-btn');
-    var qbmNameInput = document.getElementById('qbm-name-input');
-    var qbmUrlPreview = document.getElementById('qbm-url-preview');
-    var qbmFolderValue = document.getElementById('qbm-folder-value');
-    var qbmSelectedFolder = '0';
-
-    function setQbmFolder(key) {
-      qbmSelectedFolder = key;
-      qbmFolderValue.textContent = key;
-    }
-
-    function openQuickBookmark() {
-      if (!currentUrl) return;
-      qbmUrlPreview.textContent = currentUrl;
-      var name = deriveBookmarkName(currentUrl);
-      qbmNameInput.value = name;
-      setQbmFolder(deriveFolderFromName(name));
-      quickBmOverlay.classList.add('open');
-      try { window.AndroidAPI.setBarExtraHeight(200 - 84); } catch (e) {}
-      qbmNameInput.focus();
-      qbmNameInput.select();
-    }
-
-    function closeQuickBookmark() {
-      quickBmOverlay.classList.remove('open');
-      try { window.AndroidAPI.setBarExtraHeight(0); } catch (e) {}
-    }
-
-    btnAddBookmark.addEventListener('click', openQuickBookmark);
-    qbmCloseBtn.addEventListener('click', closeQuickBookmark);
-    qbmCancelBtn.addEventListener('click', closeQuickBookmark);
-
-    // Live: the folder always tracks the first letter of whatever's typed,
-    // so it's clear which folder it'll land in before you hit Save.
-    qbmNameInput.addEventListener('input', function () {
-      setQbmFolder(deriveFolderFromName(qbmNameInput.value));
-    });
-
-    qbmSaveBtn.addEventListener('click', function () {
-      var label = qbmNameInput.value.trim() || deriveBookmarkName(currentUrl) || currentUrl;
-      window.AndroidAPI.addBookmark(JSON.stringify({ label: label, url: currentUrl, folder: qbmSelectedFolder }));
-      closeQuickBookmark();
-    });
-
-    try { window.onDownloadsUpdated(window.AndroidAPI.getDownloadsJson()); } catch (e) { renderDownloads(); }
-    try { window.onBookmarksUpdated(window.AndroidAPI.getBookmarksJson()); } catch (e) { bookmarks = []; }
-  })();
+// --- Hooks called by DownloadManagerBridge via evaluateJavascript ---
+window.onDownloadUpdate = function(data) {
+    const idx = downloadsList.findIndex(d => d.id === data.id);
+    if (idx === -1) downloadsList.unshift(data); else downloadsList[idx] = data;
+    renderDownloads();
+    updateDownloadBadge();
+};
+window.onDownloadsList = function(list) {
+    if (Array.isArray(list)) { downloadsList = list; renderDownloads(); updateDownloadBadge(); }
+};
+console.log('[FastestBrowserToolbar] Extension features loaded');
