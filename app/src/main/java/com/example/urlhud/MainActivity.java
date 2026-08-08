@@ -14,6 +14,8 @@ import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
@@ -90,8 +92,18 @@ public class MainActivity extends Activity {
             }
         });
 
-        // 4. Attach Header Bypass (Equivalent to declarativeNetRequest)
+        // 4. Attach Header Bypass with Safety Check
         mainWebView.setWebViewClient(new HeaderBypassWebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                // SAFETY NET: Ignore local files, blobs, and data URIs to prevent startup crashes
+                String url = request.getUrl().toString();
+                if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                    return null; 
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
+
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
