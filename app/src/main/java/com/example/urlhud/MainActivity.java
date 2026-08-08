@@ -211,7 +211,7 @@ public class MainActivity extends Activity {
     private void injectTrinitySyncScript(WebView webView) {
         try {
             InputStream is = getAssets().open("trinity_sync.js");
-            Scanner sc = new Scanner(is).useDelimiter("\A");
+            Scanner sc = new Scanner(is).useDelimiter("\\A");
             String js = sc.hasNext() ? sc.next() : "";
             is.close();
             if (!js.isEmpty()) {
@@ -241,7 +241,7 @@ public class MainActivity extends Activity {
     public void broadcastJsToAllPanes(String jsonPayload) {
         runOnUiThread(() -> {
             String js = "javascript:(function(){" +
-                "try{ window.postMessage(" + jsonPayload + ", "*"); }catch(e){}" +
+                "try{ window.postMessage(" + jsonPayload + ", '*'); }catch(e){}" +
                 "})();";
             for (WebView wv : allPaneWebViews) {
                 wv.evaluateJavascript(js, null);
@@ -371,8 +371,7 @@ public class MainActivity extends Activity {
     // =========================================================
     private String escapeJs(String s) {
         if (s == null) return "";
-        return s.replace("\", "\\").replace("'", "\'").replace("
-", "\n");
+        return s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
     }
 
     public WebView getActivePaneWebView() {

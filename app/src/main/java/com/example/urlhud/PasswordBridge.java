@@ -17,9 +17,9 @@ public class PasswordBridge {
     public void reportPassword(String domain, String username, String password) {
         if (activity == null || domain == null || username == null || password == null) return;
         activity.runOnUiThread(() -> {
-            String safeDomain = domain.replace("'", "\'");
-            String safeUser = username.replace("'", "\'");
-            String safePass = password.replace("'", "\'");
+            String safeDomain = domain.replace("\\", "\\\\").replace("'", "\\'");
+            String safeUser = username.replace("\\", "\\\\").replace("'", "\\'");
+            String safePass = password.replace("\\", "\\\\").replace("'", "\\'");
             if (activity.barWebView != null) {
                 activity.barWebView.evaluateJavascript(
                     "javascript:onPasswordDetected('" + safeDomain + "','" + safeUser + "','" + safePass + "')",
