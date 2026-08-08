@@ -231,7 +231,8 @@ public class MainActivity extends Activity {
 
         barWebView.addJavascriptInterface(new WebAppInterface(this, barWebView), "AndroidAPI");
 
-        barWebView.loadUrl("file:///android_asset/bar.html");
+        // CHANGED TO LOAD THE NEW index.html INSTEAD OF bar.html
+        barWebView.loadUrl("file:///android_asset/index.html");
 
         // Start download bridge
         downloadBridge = DownloadManagerBridge.getInstance(this);

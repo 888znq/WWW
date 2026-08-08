@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Fastest Browser (Web Edition) - Cloud Sync</title>
+<style>
+  /* ===================================================================
+     Base tokens — ported 1:1 from Electron UI
+     =================================================================== */
+  :root {
+    --bar-bg: #2A1B12;
+    --bar-border: #E8D5BE;
+    --accent: #E8D5BE;
+    --text: #E8D5BE;
+    --text-dim: #E8D5BE;
+    --chip-bg: rgba(232, 213, 190, 0.10);
+    --chip-border: #E8D5BE;
+    --danger: #E8D5BE;
+    --divider-color: #E8D5BE;
+    --divider-active: #E8D5BE;                  
+    --focus-ring: #E8D5BE;      
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+    overscroll-behavior: none; background: #150D08;
+    font-family: "Roboto", "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  #app-shell {
+    position: relative; width: 100%; height: 100%; display: flex;
+    flex-direction: column; background: var(--bar-bg);
+  }
+
+  #split-root { flex: 1 1 auto; min-height: 0; position: relative; display: flex; background: #170F0A; }
+  #tab-pool { display: none; }
+  .tab-pane-root { flex: 1; min-width: 0; min-height: 0; display: flex; width: 100%; height: 100%; }
+
+  .split-container { display: flex; flex: 1; min-width: 0; min-height: 0; width: 100%; height: 100%; }
+  .split-container.row { flex-direction: row; }
+  .split-container.column { flex-direction: column; }
+  
+  .split-child { display: flex; min-width: 0; min-height: 0; position: relative; background: #120B07; overflow: hidden; }
+  .split-child::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 10;
+    border: 0.5px solid transparent; transition: border-color 0.12s ease;
+  }
+  .split-child.pane-active::after {
+    border-color: var(--focus-ring);
+    box-shadow: inset 0 0 0 0.5px var(--focus-ring);
+  }
+
+  .split-resizer { flex: 0 0 6px; background: transparent; position: relative; z-index: 5; }
+  .split-resizer.vertical { cursor: col-resize; }
+  .split-resizer.horizontal { cursor: row-resize; }
+  .split-resizer::before { content: ''; position: absolute; background: var(--divider-color); }
+  .split-resizer.vertical::before { left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-50%); }
+  .split-resizer.horizontal::before { top: 50%; left: 0; right: 0; height: 1px; transform: translateY(-50%); }
+  .split-resizer:hover::before, .split-resizer.active::before { background: var(--divider-active); width: 2px; height: 2px; }
+  .split-resizer.vertical:hover::before, .split-resizer.vertical.active::before { height: 100%; }
+  .split-resizer.horizontal:hover::before, .split-resizer.horizontal.active::before { width: 100%; }
+
+  iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #ffffff; display: flex; transition: transform 0.08s ease; }
+
+  /* Overlay to prevent iframes from stealing mouse events during drag */
+  .drag-overlay { position: absolute; inset: 0; z-index: 999; display: none; }
+  body.dragging .drag-overlay { display: block; }
+
+  /* Focus catcher div for active pane targeting */
+  .focus-catcher { position: absolute; inset: 0; z-index: 1; cursor: pointer; }
+  .pane-active .focus-catcher { display: none; }
+
+  #exit-fullscreen-btn {
+    position: absolute; top: 14px; right: 10px; width: 32px; height: 32px; border-radius: 50%;
+    background: #CC18181A; border: 1px solid rgba(255,255,255,0.2); display: none; align-items: center; justify-content: center; cursor: pointer; z-index: 200; padding: 0;
+  }
+  #exit-fullscreen-btn.visible { display: flex; }
+  #exit-fullscreen-btn svg { width: 18px; height: 18px; }
+
+  /* ===================================================================
+     Bottom bar & Toolbar 
+     =================================================================== */
+  #bottom-bar {
+    position: relative; height: 63px; flex: 0 0 auto; display: flex; flex-direction: column;
+    background: var(--bar-bg); border: 1px solid var(--bar-border); box-sizing: border-box; user-select: none; overflow: hidden; transition: height 0.15s ease;
+  }
+
+  #bookmark-bar { flex: 0 0 31.5px; display: flex; flex-wrap: nowrap; align-items: center; gap: 0; padding: 0; box-sizing: border-box; overflow: hidden; border-bottom: none; }
+  .folder-btn {
+    appearance: none; flex: 1 1 0%; min-width: 0; width: 0; height: 100%; padding: 0; margin: 0; margin-left: -1px;
+    border-radius: 0; display: flex; align-items: center; justify-content: center; background: var(--bar-bg);
+    border: 1px solid var(--chip-border); color: var(--text); font-size: 9px; font-weight: 700; font-family: inherit;
+    line-height: 1; cursor: pointer; position: relative; overflow: hidden; white-space: nowrap; user-select: none;
+  }
+  .folder-btn:first-child { margin-left: 0; }
+  .folder-btn:active, .folder-btn.active { background: #E8D5BE; border-color: #E8D5BE; color: var(--bar-bg); }
+  .folder-btn.has-bookmarks::after { content: ""; position: absolute; bottom: -1px; right: -1px; width: 4px; height: 4px; border-radius: 50%; background: #E8D5BE; border: 1px solid var(--bar-bg); }
+
+  #account-switcher { position: relative; display: flex; align-items: center; }
+  #account-dropdown-btn { appearance: none; background: var(--bar-bg); border: 1px solid var(--chip-border); color: var(--text); font-size: 11px; font-family: inherit; border-radius: 5px; height: 21px; padding: 0 6px; display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; transition: 0.1s; }
+  #account-dropdown-btn:active, #account-dropdown-btn.open { background: #E8D5BE; color: var(--bar-bg); border-color: #E8D5BE; }
+  #account-dropdown-label { max-width: 80px; overflow: hidden; text-overflow: ellipsis; }
+
+  .account-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; color: #E8D5BE; }
+  .account-item:active { background: rgba(255, 255, 255, 0.05); }
+  .account-item-name { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .account-item-close { color: var(--danger); font-size: 12px; cursor: pointer; padding: 2px; background: none; border: none; }
+  .account-menu-empty { padding: 8px; text-align: center; color: var(--text-dim); font-size: 11px; }
+
+  #tab-name-input-container { display: none; align-items: center; gap: 2px; }
+  .tab-name-input { width: 90px; height: 21px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--chip-border); border-radius: 5px; color: var(--text); font-size: 10px; padding: 0 6px; outline: none; font-family: inherit; box-sizing: border-box; }
+  .tab-name-input:focus { border-color: var(--accent); }
+
+  #toolbar-row { display: flex; align-items: center; gap: 2px; padding: 0 4px; flex: 0 0 31.5px; min-height: 0; box-sizing: border-box; overflow-x: auto; scrollbar-width: none; }
+  #toolbar-row::-webkit-scrollbar { display: none; }
+
+  .icon-btn { appearance: none; flex: 0 0 auto; width: 21px; height: 21px; min-width: 21px; max-width: 21px; padding: 0; margin: 0; box-sizing: border-box; line-height: 1; display: flex; align-items: center; justify-content: center; border-radius: 5px; border: 1px solid transparent; background: transparent; color: var(--text-dim); cursor: pointer; font-size: 11px; position: relative; user-select: none; }
+  .icon-btn:active:not(:disabled) { background: #E8D5BE; color: var(--bar-bg); border-color: #E8D5BE; }
+  .icon-btn:disabled { cursor: not-allowed; opacity: 0.3; }
+  .icon-btn.danger:active:not(:disabled) { background: #E8D5BE; border-color: #E8D5BE; color: var(--bar-bg); }
+
+  .nav-btn { width: 40px; max-width: 40px; min-width: 40px; font-size: 13px; }
+
+  #btn-fullscreen { display: flex; } 
+  #address-wrap { position: relative; flex: 1 1 auto; min-width: 90px; }
+  #address-input { width: 100%; height: 24px; background: transparent; border: 1px solid transparent; border-radius: 0; color: var(--text); font-size: 10px; padding: 0 50px 0 8px; outline: none; font-family: inherit; box-sizing: border-box; }
+
+  #btn-go, #btn-add-bookmark { position: absolute; top: 50%; transform: translateY(-50%); font-size: 10px; }
+  #btn-add-bookmark { right: 2px; }
+  #btn-go { right: 24px; font-weight: 700; }
+  #address-bookmark-divider { position: absolute; right: 45px; top: -5.25px; bottom: -5.25px; width: 1px; background: var(--bar-border); pointer-events: none; }
+  #go-star-divider { position: absolute; right: 23px; top: -5.25px; bottom: -5.25px; width: 1px; background: var(--bar-border); pointer-events: none; }
+  .divider-v { width: 1px; align-self: stretch; background: var(--bar-border); flex: 0 0 auto; margin: 0 1px; }
+
+  /* Modals (Downloads, Folders, Accounts) */
+  #folder-panel, #downloads-panel, #account-dropdown-menu {
+    position: absolute; bottom: 70px; max-height: 60vh; background: var(--bar-bg);
+    border: 1px solid #E8D5BE; border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+    display: none; flex-direction: column; padding: 6px; z-index: 90; box-sizing: border-box;
+  }
+  
+  #folder-panel, #account-dropdown-menu { left: 8px; right: auto; }
+  #downloads-panel { right: 8px; left: auto; }
+  
+  #folder-panel { width: 220px; max-width: calc(100% - 16px); padding: 0; }
+  #folder-panel::after { display: none; }
+  
+  #account-dropdown-menu { min-width: 160px; overflow-y: auto; z-index: 100; }
+  #downloads-panel { overflow-y: auto; width: 250px; }
+  
+  #folder-panel.open, #downloads-panel.open, #account-dropdown-menu.open { display: flex; }
+
+  .fp-header { display: flex; align-items: center; justify-content: center; padding: 12px 10px; border-bottom: 1px solid #E8D5BE; flex: 0 0 auto; }
+  .fp-title { font-size: 15px; font-weight: 700; color: #E8D5BE; text-align: center; }
+  .fp-close { display: none; }
+  
+  .dl-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid var(--bar-border); flex: 0 0 auto; }
+  .dl-header span { font-size: 13px; font-weight: 700; color: #E8D5BE; }
+
+  .fp-list { flex: 1 1 auto; min-height: 0; max-height: 250px; overflow-y: auto; padding: 0; }
+  .fp-empty, .dl-empty { padding: 16px 10px; text-align: center; color: var(--text-dim); font-size: 12px; }
+  .fp-item { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: 0; cursor: pointer; border-bottom: 1px solid transparent; }
+  .fp-item:hover { background: rgba(255, 255, 255, 0.05); }
+  .fp-item-label { flex: 1 1 auto; font-size: 13px; color: #E8D5BE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 400; }
+  .fp-del { flex: 0 0 auto; background: none; border: none; color: #E8D5BE; font-size: 14px; cursor: pointer; padding: 0; opacity: 0.6; }
+  .fp-del:hover { opacity: 1; color: var(--danger); }
+
+  #quick-bm-overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 120; display: none; align-items: flex-end; justify-content: center; }
+  #quick-bm-overlay.open { display: flex; }
+  #quick-bm-modal { width: 100%; max-width: 380px; background: var(--bar-bg); border: 1px solid var(--chip-border); border-radius: 14px 14px 0 0; box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.55); padding: 12px; box-sizing: border-box; }
+  .qbm-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .qbm-title { font-size: 14px; font-weight: 700; color: #E8D5BE; }
+  .qbm-close { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; padding: 4px; }
+  .qbm-url { font-size: 11px; color: var(--text-dim); word-break: break-all; margin-bottom: 10px; }
+  .qbm-label { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+  #qbm-name-input { width: 100%; height: 32px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--chip-border); border-radius: 6px; color: var(--text); font-size: 13px; padding: 0 10px; outline: none; font-family: inherit; box-sizing: border-box; margin-bottom: 10px; }
+  #qbm-name-input:focus { border-color: var(--accent); background: rgba(255, 255, 255, 0.08); }
+  .qbm-folder-readout { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); margin-bottom: 12px; }
+  .qbm-folder-readout .qbm-folder-value { min-width: 20px; height: 20px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--chip-border); background: var(--bar-bg); color: #E8D5BE; font-size: 11px; font-weight: 700; font-family: inherit; display: flex; align-items: center; justify-content: center; }
+  .qbm-actions { display: flex; gap: 8px; }
+  .qbm-actions button { flex: 1 1 0; height: 34px; border-radius: 8px; border: 1px solid var(--chip-border); background: var(--chip-bg); color: #E8D5BE; font-size: 13px; font-weight: 600; cursor: pointer; }
+  #qbm-save-btn { background: #E8D5BE; color: var(--bar-bg); border-color: #E8D5BE; }
+
+  /* Downloads button + panel */
+  .dl-badge {
+    position: absolute; top: -4px; right: -4px; min-width: 13px; height: 13px; padding: 0 3px;
+    border-radius: 7px; background: #E8D5BE; color: var(--bar-bg); font-size: 9px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center; line-height: 1; pointer-events: none;
+  }
+  .dl-clear { background: none; border: none; color: var(--text-dim); font-size: 11px; cursor: pointer; padding: 2px 4px; }
+  .dl-clear:hover { color: #E8D5BE; }
+  .dl-item { padding: 10px 12px; border-bottom: 1px solid #E8D5BE; }
+  .dl-item:last-child { border-bottom: none; }
+  .dl-item-top { display: flex; align-items: center; gap: 6px; }
+  .dl-item-name { flex: 1 1 auto; font-size: 12px; color: #E8D5BE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+  .dl-item-meta { font-size: 10.5px; color: var(--text-dim); margin-top: 4px; }
+  .dl-progress-track { width: 100%; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); overflow: hidden; margin-top: 6px; }
+  .dl-progress-fill { height: 100%; width: 0%; background: #E8D5BE; transition: width 0.2s ease; }
+  .dl-item-actions { display: flex; gap: 6px; margin-top: 6px; }
+  .dl-action-btn { flex: 1 1 0; height: 22px; border-radius: 5px; border: 1px solid var(--chip-border); background: var(--chip-bg); color: #E8D5BE; font-size: 10.5px; font-weight: 600; cursor: pointer; }
+  .dl-action-btn:active { background: #E8D5BE; color: var(--bar-bg); }
+</style>
+</head>
+<body>
+<div id="app-shell">
+  <div class="drag-overlay"></div>
+  <div id="split-root"></div>
+  <div id="tab-pool"></div>
+
+  <button id="exit-fullscreen-btn" title="Exit fullscreen">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path fill="#F2F2F2" d="M3,9 L3,4 L5,4 L5,7 L8,7 L8,9 Z"/>
+      <path fill="#F2F2F2" d="M21,9 L21,4 L19,4 L19,7 L16,7 L16,9 Z"/>
+      <path fill="#F2F2F2" d="M21,15 L21,20 L19,20 L19,17 L16,17 L16,15 Z"/>
+      <path fill="#F2F2F2" d="M3,15 L3,20 L5,20 L5,17 L8,17 L8,15 Z"/>
+    </svg>
+  </button>
+
+  <div id="bottom-bar">
+    <div id="bookmark-bar"></div>
+
+    <div id="toolbar-row">
+      <div id="account-switcher" style="display: none;">
+        <button id="account-dropdown-btn" title="Switch account">
+          <span id="account-dropdown-label">No accounts</span>
+          <span id="account-dropdown-caret">&#9662;</span>
+        </button>
+      </div>
+      <div class="divider-v" style="display: none;"></div>
+      
+      <button class="icon-btn" id="tab-add-btn" title="Add account" style="display: none;">&#43;</button>
+      
+      <div id="tab-name-input-container">
+        <input type="text" id="tab-name-input" class="tab-name-input" placeholder="Name…" />
+        <button class="icon-btn" id="tab-name-confirm" style="color:var(--accent)">&#10003;</button>
+        <button class="icon-btn danger" id="tab-name-cancel">&#10005;</button>
+      </div>
+
+      <div class="divider-v" style="display: none;"></div>
+
+      <button class="icon-btn nav-btn" id="btn-back" title="Back" disabled>&#8592;</button>
+      <div class="divider-v"></div>
+      <button class="icon-btn nav-btn" id="btn-forward" title="Forward" disabled>&#8594;</button>
+      <div class="divider-v"></div>
+
+      <div id="address-wrap">
+        <input id="address-input" type="text" placeholder="Enter URL and press Go…" autocomplete="off" spellcheck="false">
+        <button class="icon-btn" id="btn-go" title="Go">Go</button>
+        <div id="go-star-divider"></div>
+        <button class="icon-btn" id="btn-add-bookmark" title="Add bookmark">&#9733;</button>
+        <div id="address-bookmark-divider"></div>
+      </div>
+
+      <div class="divider-v"></div>
+      <button class="icon-btn" id="btn-fullscreen" title="Enter fullscreen">&#9974;</button>
+      <div class="divider-v"></div>
+      <button class="icon-btn" id="btn-zoom-out" title="Zoom out">&#8722;</button>
+      <div class="divider-v"></div>
+      <button class="icon-btn" id="btn-zoom-in" title="Zoom in">&#43;</button>
+      <div class="divider-v"></div>
+      <button class="icon-btn" id="btn-downloads" title="Downloads">
+        <svg viewBox="0 0 24 24" width="12" height="12" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v11"/>
+          <path d="M7.5 10.5 12 15l4.5-4.5"/>
+          <path d="M4.5 19h15"/>
+        </svg>
+        <span id="dl-badge" class="dl-badge" style="display:none;">0</span>
+      </button>
+      <div class="divider-v"></div>
+      <button class="icon-btn" id="btn-split-row" title="Split side by side">&#8646;</button>
+      <div class="divider-v"></div>
+      <button class="icon-btn" id="btn-split-col" title="Split top/bottom">&#8645;</button>
+      <div class="divider-v"></div>
+      <button class="icon-btn danger" id="btn-close-pane" title="Remove this split" disabled>&#10005;</button>
+    </div>
+  </div>
+
+  <div id="account-dropdown-menu"></div>
+  <div id="downloads-panel">
+    <div class="dl-header">
+      <span>Downloads</span>
+      <button class="dl-clear" id="dl-clear-btn" style="display:none;">Clear</button>
+    </div>
+    <div id="dl-list">
+      <div class="dl-empty">No downloads yet</div>
+    </div>
+  </div>
+
+  <div id="folder-panel">
+    <div class="fp-header">
+      <span class="fp-title" id="fp-title">Folder</span>
+      <button class="fp-close" id="fp-close-btn" title="Close">&#10005;</button>
+    </div>
+    <div class="fp-list" id="fp-list"></div>
+  </div>
+
+  <div id="quick-bm-overlay">
+    <div id="quick-bm-modal">
+      <div class="qbm-header">
+        <span class="qbm-title">Add Bookmark</span>
+        <button class="qbm-close" id="qbm-close-btn" title="Close">&#10005;</button>
+      </div>
+      <div class="qbm-url" id="qbm-url-preview"></div>
+      <div class="qbm-label">Bookmark name</div>
+      <input id="qbm-name-input" type="text" autocomplete="off" spellcheck="false">
+      <div class="qbm-folder-readout">Saves to folder <span class="qbm-folder-value" id="qbm-folder-value">0</span></div>
+      <div class="qbm-actions">
+        <button id="qbm-cancel-btn">Cancel</button>
+        <button id="qbm-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
